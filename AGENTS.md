@@ -1,0 +1,76 @@
+# AGENTS.md
+
+This repository implements `packagent`, a small Python CLI for managing
+isolated Codex home environments under `~/.packagent-v1`.
+
+These instructions apply to the entire repository.
+
+## Project scope
+
+- Keep v1 focused on the **user-level Codex home layer** only.
+- Do not expand the current product to install harness packages, install native
+  CLIs, or manage package registries unless the user explicitly asks for that
+  scope change.
+- Treat **Codex-only** support as the current product boundary. The code should
+  stay ready for future hosts, but v1 behavior should not quietly turn into a
+  multi-host implementation.
+- Preserve the intentional v1 limitation that only **one globally active env**
+  exists at a time through the managed `~/.codex` symlink.
+
+## Architecture expectations
+
+- Runtime code lives in `src/packagent/`.
+- Keep the runtime **stdlib-first**. Avoid adding runtime dependencies unless
+  they remove substantial complexity and are clearly justified.
+- Preserve the current separation of concerns:
+  - `HostAdapter` for host-specific path rules
+  - `ActivationBackend` for activation strategy
+  - `PackagentManager` for stateful workflows
+  - `shell.py` for generated shell integration
+- Keep the on-disk contract stable unless the user explicitly asks to change it:
+  - `~/.packagent-v1/envs/<env>/.codex`
+  - `~/.packagent-v1/state.json`
+  - `~/.codex` as the managed symlink target for the active env
+- When changing activation or takeover logic, preserve the safety model:
+  - backup/import unmanaged homes before takeover
+  - keep `base` as the permanent fallback environment
+  - refuse destructive removal of `base` or the active environment
+  - use the file lock around mutating operations
+
+## Testing rules
+
+- Use `pytest`.
+- Add or update tests for any behavior change in:
+  - takeover/import
+  - activation/deactivation
+  - doctor/repair
+  - shell hook rendering
+  - environment validation or state serialization
+- Filesystem tests must use a temporary `HOME`. Never write tests that touch the
+  real user `~/.codex` or `~/.packagent-v1`.
+- For shell behavior, test both bash and zsh output when changing the shell hook
+  contract.
+
+## Development workflow
+
+- Prefer Python for project work. Do not introduce Node/TS for the manager
+  itself unless the user explicitly asks for a language shift.
+- Keep code compatible with Python 3.9+.
+- Update docs when changing user-facing commands or guarantees:
+  - `README.md` for usage and CLI behavior
+  - `docs/architecture.md` for design changes
+- Before finishing substantial code changes, run:
+  - `./.venv/bin/pytest -q` if the local venv exists
+  - `./.venv/bin/python -m build` when packaging behavior changes
+- On machines with older `pip`, editable installs may not work with the current
+  `pyproject.toml` backend. In that case, use direct test-tool installation or a
+  wheel install for smoke checks instead of rewriting packaging just to satisfy
+  old editable-install behavior.
+
+## Change hygiene
+
+- Keep commits focused and use clear commit messages.
+- Do not overwrite unrelated user changes in the worktree.
+- When documenting limitations, be explicit that `packagent` does **not**
+  isolate trusted repo-local `.codex/` layers or repo/system instruction files
+  that Codex may also load.
