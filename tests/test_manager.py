@@ -160,6 +160,69 @@ def test_cli_activate_requires_shell_hook(manager: PackagentManager, capsys: pyt
     assert "shell init" in captured.err
 
 
+def test_cli_shell_init_bootstraps_base_prompt_state(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(["shell", "init", "bash"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "export PACKAGENT_ACTIVE_ENV='base'" in output
+    assert f"export CODEX_HOME='{manager.host.env_home_path(manager.paths, 'base')}'" in output
+
+
+def test_cli_init_writes_detected_shell_rc_file(
+    manager: PackagentManager,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.setattr("packagent.shell._detect_shell_from_process_tree", lambda: "")
+
+    exit_code = main(["init"])
+    output = capsys.readouterr().out
+    rc_path = manager.paths.home / ".bashrc"
+
+    assert exit_code == 0
+    assert rc_path.exists()
+    assert 'eval "$(packagent shell init bash)"' in rc_path.read_text(encoding="utf-8")
+    assert f"initialized\tbash\t{rc_path}\tupdated" in output
+    assert 'run_now\teval "$(packagent shell init bash)"' in output
+
+
+def test_cli_init_can_target_explicit_rc_file(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc_path = manager.paths.home / ".config" / "packagent-test-zshrc"
+
+    exit_code = main(["init", "--shell", "zsh", "--rc-file", str(rc_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert 'eval "$(packagent shell init zsh)"' in rc_path.read_text(encoding="utf-8")
+    assert f"initialized\tzsh\t{rc_path}\tupdated" in output
+
+
+def test_cli_deactivate_emits_base_activation_commands(
+    manager: PackagentManager,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manager.create_env("work")
+    manager.activate_env("work")
+    monkeypatch.setenv("PACKAGENT_SHELL_HOOK", "1")
+    monkeypatch.setenv("PACKAGENT_SHELL", "bash")
+
+    exit_code = main(["deactivate"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "export PACKAGENT_ACTIVE_ENV='base'" in output
+    assert f"export CODEX_HOME='{manager.host.env_home_path(manager.paths, 'base')}'" in output
+
+
 def test_cli_list_and_status_are_script_friendly(manager: PackagentManager, capsys: pytest.CaptureFixture[str]) -> None:
     manager.create_env("work")
 

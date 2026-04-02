@@ -39,7 +39,17 @@ pipx install packagent
 
 ## Quick start
 
-Initialize the shell hook once per shell session:
+Install shell integration once:
+
+```bash
+packagent init
+source ~/.zshrc  # use ~/.bashrc on bash
+```
+
+`packagent init` detects `bash` or `zsh`, writes a managed bootstrap block into
+the right rc file, and leaves your shell in `(base)` after you reload it.
+
+Low-level manual hook setup is still available if you want it:
 
 ```bash
 eval "$(packagent shell init zsh)"
@@ -68,8 +78,12 @@ Return to the default base environment:
 packagent deactivate
 ```
 
+`deactivate` switches you back to `(base)` rather than clearing the packagent
+prompt state.
+
 ## Commands
 
+- `packagent init [--shell {bash|zsh}] [--rc-file PATH]`
 - `packagent shell init {bash|zsh}`
 - `packagent create -n <env>`
 - `packagent create -n <env> --clone <source-env>`
@@ -132,7 +146,7 @@ Run the scripted end-to-end smoke flow:
 That flow exercises:
 
 - installing `packagent` with `uv tool install`
-- initializing the shell hook
+- installing shell integration with `packagent init`
 - first-run takeover of an unmanaged `~/.codex`
 - creating and activating environments
 - writing harness-like files into the active `~/.codex`
@@ -150,6 +164,18 @@ Open an interactive shell for manual testing:
 
 Inside the container, the test user home is `/home/tester`, so all `~/.codex`
 and `~/.packagent-v1` mutations stay isolated inside the container.
+
+The repo itself is copied into the container at `/workspace`. Because
+`packagent` is not published to a package index yet, install the local checkout
+from there:
+
+```bash
+uv tool install /workspace
+packagent init
+source ~/.bashrc
+```
+
+`uv tool install packagent` will only work after a real package publish.
 
 If you want to try authenticated Codex flows manually, pass through your API key
 when starting the container:

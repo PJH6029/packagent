@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
+import shlex
 import sys
 from typing import Sequence
 
 from packagent.app import PackagentManager
 from packagent.errors import UserFacingError
-from packagent.models import DoctorReport, StatusReport
+from packagent.models import ActivationResult, DoctorReport, StatusReport
 from packagent.shell import (
     SUPPORTED_SHELLS,
+    default_rc_path,
     detect_shell,
+    install_shell_init,
     render_activate_commands,
     render_deactivate_commands,
     render_shell_init,
@@ -26,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     shell_subparsers = shell_parser.add_subparsers(dest="shell_command", required=True)
     shell_init = shell_subparsers.add_parser("init", help="print a shell hook")
     shell_init.add_argument("shell", choices=SUPPORTED_SHELLS)
+
+    init_parser = subparsers.add_parser("init", help="install shell startup integration")
+    init_parser.add_argument("--shell", choices=SUPPORTED_SHELLS)
+    init_parser.add_argument("--rc-file")
 
     create_parser = subparsers.add_parser("create", help="create an environment")
     create_parser.add_argument("-n", "--name", required=True)
@@ -52,8 +60,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     manager = PackagentManager()
     try:
         if args.command == "shell":
-            print(render_shell_init(args.shell))
+            status = manager.status()
+            initial_result = ActivationResult(
+                env_name=status.active_env,
+                managed_home_path=status.managed_home_path,
+                codex_home=status.expected_target,
+            )
+            print(render_shell_init(args.shell, initial_result))
             return 0
+        if args.command == "init":
+            return _handle_init(manager, args.shell, args.rc_file)
         if args.command == "create":
             metadata = manager.create_env(args.name, clone_from=args.clone)
             print(f"created\t{metadata.name}\t{manager.paths.env_dir(metadata.name)}")
@@ -99,8 +115,23 @@ def _handle_deactivate(manager: PackagentManager) -> int:
         print(shell_hook_error_message(detect_shell()), file=sys.stderr)
         return 2
     shell_name = _current_shell()
-    manager.deactivate_env()
-    print(render_deactivate_commands(shell_name))
+    result = manager.deactivate_env()
+    print(render_deactivate_commands(shell_name, result))
+    return 0
+
+
+def _handle_init(manager: PackagentManager, requested_shell: str | None, rc_file: str | None) -> int:
+    shell_name = requested_shell or detect_shell()
+    status = manager.status()
+    target = Path(rc_file).expanduser() if rc_file else default_rc_path(shell_name, manager.paths.home)
+    result = install_shell_init(shell_name, target)
+    print(
+        f"initialized\t{result.shell_name}\t{result.rc_path}\t"
+        f"{'updated' if result.changed else 'unchanged'}",
+    )
+    print(f"active_env\t{status.active_env}")
+    print(f"run_now\teval \"$(packagent shell init {shell_name})\"")
+    print(f"reload\tsource {shlex.quote(result.rc_path)}")
     return 0
 
 

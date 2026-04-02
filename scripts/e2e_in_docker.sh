@@ -47,9 +47,16 @@ EOF
   echo "== install packagent via uv tool =="
   uv tool install /workspace
   command -v packagent >/dev/null || fail "packagent command was not installed"
+  local packagent_bin
+  packagent_bin="$(command -v packagent)"
 
-  echo "== initialize shell hook =="
+  echo "== install shell integration =="
+  packagent init --shell bash >/tmp/packagent-init.txt
+  grep -q $'initialized\tbash\t' /tmp/packagent-init.txt || fail "packagent init did not report bash setup"
+  grep -q 'eval "$(packagent shell init bash)"' "$HOME/.bashrc" || fail "bashrc was not updated by packagent init"
+  # Bootstrap the current non-interactive test shell after verifying rc-file installation.
   eval "$(packagent shell init bash)"
+  [ "${PACKAGENT_ACTIVE_ENV:-}" = "base" ] || fail "base env was not active after shell init"
 
   echo "== create and activate first env =="
   packagent create -n codex-with-demo
@@ -104,6 +111,8 @@ EOF
   assert_path_missing "$root/envs/codex-with-demo"
 
   uv tool uninstall packagent
+  [ ! -x "$packagent_bin" ] || fail "packagent executable still exists after uninstall"
+  unset -f packagent || true
   hash -r
   if command -v packagent >/dev/null 2>&1; then
     fail "packagent command still exists after uninstall"
@@ -113,4 +122,3 @@ EOF
 }
 
 main "$@"
-

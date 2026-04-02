@@ -1,19 +1,37 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 from pathlib import Path
+import pwd
+import re
+import subprocess
 
 from packagent.models import ActivationResult
 
 
 SUPPORTED_SHELLS = ("bash", "zsh")
+INIT_BLOCK_START = "# >>> packagent initialize >>>"
+INIT_BLOCK_END = "# <<< packagent initialize <<<"
+
+
+@dataclass(frozen=True)
+class ShellInitInstallResult:
+    shell_name: str
+    rc_path: str
+    changed: bool
 
 
 def detect_shell() -> str:
-    shell_path = os.environ.get("SHELL", "")
-    shell_name = Path(shell_path).name
-    if shell_name in SUPPORTED_SHELLS:
-        return shell_name
+    for candidate in (
+        os.environ.get("PACKAGENT_SHELL", ""),
+        _detect_shell_from_process_tree(),
+        os.environ.get("SHELL", ""),
+        _detect_login_shell(),
+    ):
+        shell_name = Path(candidate).name.lstrip("-")
+        if shell_name in SUPPORTED_SHELLS:
+            return shell_name
     return "zsh"
 
 
@@ -22,12 +40,47 @@ def shell_hook_error_message(shell_name: str | None = None) -> str:
     return f"activation must be run through the shell hook. Run: eval \"$(packagent shell init {shell_name})\""
 
 
-def render_shell_init(shell_name: str) -> str:
+def default_rc_path(shell_name: str, home: Path | None = None) -> Path:
+    _validate_shell(shell_name)
+    root = home or Path.home()
+    return root / (".bashrc" if shell_name == "bash" else ".zshrc")
+
+
+def install_shell_init(shell_name: str, rc_path: Path) -> ShellInitInstallResult:
+    _validate_shell(shell_name)
+    block = render_shell_rc_block(shell_name)
+    existing = rc_path.read_text(encoding="utf-8") if rc_path.exists() else ""
+    updated = _upsert_init_block(existing, block)
+    changed = updated != existing
+    rc_path.parent.mkdir(parents=True, exist_ok=True)
+    if changed or not rc_path.exists():
+        rc_path.write_text(updated, encoding="utf-8")
+    return ShellInitInstallResult(shell_name=shell_name, rc_path=str(rc_path), changed=changed)
+
+
+def render_shell_init(shell_name: str, initial_result: ActivationResult | None = None) -> str:
     if shell_name == "bash":
-        return _render_bash_init()
-    if shell_name == "zsh":
-        return _render_zsh_init()
-    raise ValueError(f"unsupported shell: {shell_name}")
+        script = _render_bash_init()
+    elif shell_name == "zsh":
+        script = _render_zsh_init()
+    else:
+        raise ValueError(f"unsupported shell: {shell_name}")
+    if initial_result is None:
+        return script
+    return f"{script}\n{render_activate_commands(shell_name, initial_result)}"
+
+
+def render_shell_rc_block(shell_name: str) -> str:
+    _validate_shell(shell_name)
+    return "\n".join(
+        [
+            INIT_BLOCK_START,
+            "if command -v packagent >/dev/null 2>&1; then",
+            f'  eval "$(packagent shell init {shell_name})"',
+            "fi",
+            INIT_BLOCK_END,
+        ],
+    )
 
 
 def render_activate_commands(shell_name: str, result: ActivationResult) -> str:
@@ -41,15 +94,9 @@ def render_activate_commands(shell_name: str, result: ActivationResult) -> str:
     return "\n".join(lines)
 
 
-def render_deactivate_commands(shell_name: str) -> str:
+def render_deactivate_commands(shell_name: str, result: ActivationResult) -> str:
     _validate_shell(shell_name)
-    lines = [
-        "unset PACKAGENT_ACTIVE_ENV",
-        "unset PACKAGENT_ACTIVE_HOST",
-        "unset CODEX_HOME",
-        "_packagent_refresh_prompt >/dev/null 2>&1 || true",
-    ]
-    return "\n".join(lines)
+    return render_activate_commands(shell_name, result)
 
 
 def _validate_shell(shell_name: str) -> None:
@@ -57,8 +104,97 @@ def _validate_shell(shell_name: str) -> None:
         raise ValueError(f"unsupported shell: {shell_name}")
 
 
+def _detect_shell_from_process_tree() -> str:
+    pid = os.getppid()
+    visited: set[int] = set()
+    while pid > 1 and pid not in visited:
+        visited.add(pid)
+        process_name, parent_pid = _read_process_info(pid)
+        shell_name = Path(process_name).name.lstrip("-")
+        if shell_name in SUPPORTED_SHELLS:
+            return shell_name
+        if not parent_pid or parent_pid == pid:
+            break
+        pid = parent_pid
+    return ""
+
+
+def _detect_login_shell() -> str:
+    try:
+        return pwd.getpwuid(os.getuid()).pw_shell
+    except KeyError:
+        return ""
+
+
+def _read_process_info(pid: int) -> tuple[str, int]:
+    process_name, parent_pid = _read_process_info_procfs(pid)
+    if process_name:
+        return process_name, parent_pid
+    return _read_process_info_ps(pid)
+
+
+def _read_process_info_procfs(pid: int) -> tuple[str, int]:
+    status_path = Path("/proc") / str(pid) / "status"
+    comm_path = Path("/proc") / str(pid) / "comm"
+    try:
+        process_name = comm_path.read_text(encoding="utf-8").strip()
+        status_text = status_path.read_text(encoding="utf-8")
+    except OSError:
+        return "", 0
+    parent_pid = 0
+    for line in status_text.splitlines():
+        if line.startswith("PPid:"):
+            try:
+                parent_pid = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                parent_pid = 0
+            break
+    return process_name, parent_pid
+
+
+def _read_process_info_ps(pid: int) -> tuple[str, int]:
+    try:
+        process_name = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.strip()
+        parent_pid_raw = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "ppid="],
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return "", 0
+    try:
+        parent_pid = int(parent_pid_raw)
+    except ValueError:
+        parent_pid = 0
+    return process_name, parent_pid
+
+
 def _shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _upsert_init_block(existing: str, block: str) -> str:
+    normalized_block = block.rstrip() + "\n"
+    pattern = re.compile(
+        rf"{re.escape(INIT_BLOCK_START)}.*?{re.escape(INIT_BLOCK_END)}\n?",
+        re.DOTALL,
+    )
+    if pattern.search(existing):
+        return pattern.sub(normalized_block, existing, count=1)
+    if not existing:
+        return normalized_block
+    prefix = existing
+    if not prefix.endswith("\n"):
+        prefix += "\n"
+    if not prefix.endswith("\n\n"):
+        prefix += "\n"
+    return prefix + normalized_block
 
 
 def _render_bash_init() -> str:

@@ -40,14 +40,17 @@ The deactivated state is always `base`.
 
 ## Shell model
 
-Shell mutation is handled by a hook generated from `packagent shell init`.
+User-facing shell setup is handled by `packagent init`, which detects `bash` or
+`zsh` and writes a managed bootstrap block into the appropriate rc file. That
+bootstrap block delegates to the lower-level `packagent shell init` hook.
 
-The hook:
+The hook itself:
 
 - wraps `packagent activate` and `packagent deactivate`
 - evaluates shell code printed by the Python CLI
+- bootstraps the shell to the manager's current active env, usually `base`
 - updates the shell prompt prefix
-- exports `CODEX_HOME` while an environment is active
+- exports `CODEX_HOME` for the current active env, including `base`
 
 Direct `packagent activate` calls fail unless the shell hook is being used.
 
@@ -60,4 +63,3 @@ The code already separates:
 
 That keeps a later `ClaudeHost` or a future per-shell backend from forcing a
 rewrite of the manager or state model.
-

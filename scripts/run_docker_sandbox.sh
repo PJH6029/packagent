@@ -43,7 +43,7 @@ main() {
   echo "== building docker image: ${image_name} =="
   docker build -f "$repo_root/docker/Dockerfile" -t "$image_name" "$repo_root"
 
-  local docker_args=(--rm -it)
+  local docker_args=(--rm)
   if [ -n "${OPENAI_API_KEY:-}" ]; then
     docker_args+=(-e "OPENAI_API_KEY=${OPENAI_API_KEY}")
   fi
@@ -51,7 +51,19 @@ main() {
   if [ "$mode" = "test" ]; then
     docker run "${docker_args[@]}" "$image_name" bash /workspace/scripts/e2e_in_docker.sh
   else
-    docker run "${docker_args[@]}" "$image_name" bash
+    cat <<'EOF'
+== opening interactive sandbox ==
+The repository is available inside the container at /workspace.
+
+Install the local checkout with:
+  uv tool install /workspace
+  packagent init
+  source ~/.bashrc
+
+`uv tool install packagent` will fail here until packagent is published to a
+package index.
+EOF
+    docker run "${docker_args[@]}" -it "$image_name" bash
   fi
 }
 
