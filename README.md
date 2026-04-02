@@ -109,7 +109,64 @@ pytest
 python -m build
 ```
 
+## Safe Docker sandbox
+
+If you want to test `packagent` end to end without touching your real machine
+state, this repo includes a disposable Docker sandbox.
+
+What the sandbox image includes:
+
+- Python 3
+- `uv`
+- `pipx`
+- Node.js + npm
+- `@openai/codex`
+- bash and zsh
+
+Run the scripted end-to-end smoke flow:
+
+```bash
+./scripts/run_docker_sandbox.sh test
+```
+
+That flow exercises:
+
+- installing `packagent` with `uv tool install`
+- initializing the shell hook
+- first-run takeover of an unmanaged `~/.codex`
+- creating and activating environments
+- writing harness-like files into the active `~/.codex`
+- switching envs and verifying isolation
+- `doctor --fix`
+- deactivation
+- environment removal
+- uninstalling `packagent`
+
+Open an interactive shell for manual testing:
+
+```bash
+./scripts/run_docker_sandbox.sh shell
+```
+
+Inside the container, the test user home is `/home/tester`, so all `~/.codex`
+and `~/.packagent-v1` mutations stay isolated inside the container.
+
+If you want to try authenticated Codex flows manually, pass through your API key
+when starting the container:
+
+```bash
+OPENAI_API_KEY=... ./scripts/run_docker_sandbox.sh shell
+```
+
+Notes:
+
+- The Docker sandbox is for safe user-home testing. It does not isolate
+  repo-local trusted `.codex/` layers inside mounted projects, just like normal
+  `packagent` behavior.
+- This repo's current workspace does not include Docker, so the shell scripts
+  are provided and syntax-checked here, but the image build itself must be run
+  on a machine with Docker installed.
+
 ## License
 
 MIT
-
