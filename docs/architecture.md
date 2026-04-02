@@ -1,0 +1,63 @@
+# Architecture
+
+`packagent` is intentionally small and stdlib-first.
+
+## Core pieces
+
+- `CodexHost`: host-specific path rules for the managed home, currently
+  `~/.codex` and `envs/<name>/.codex`
+- `GlobalSymlinkBackend`: activation backend that points the real host home at
+  one managed environment at a time
+- `PackagentManager`: state loading, takeover, create/clone/remove, activation,
+  status, and doctor workflows
+- `shell.py`: generated bash/zsh shell hook plus shell command rendering for
+  activation and deactivation
+
+## State model
+
+State lives in `~/.packagent-v1/state.json` and records:
+
+- active environment
+- known environments
+- backup history from first-run takeover
+- managed home metadata
+
+Each environment also contains a small hidden metadata file at
+`envs/<name>/.packagent-env.json`.
+
+## First-run takeover
+
+When activation happens for the first time, `packagent` inspects `~/.codex`:
+
+- missing path: create a managed symlink
+- unmanaged directory: move it into `backups/<timestamp>/`, import it into
+  `base`, then replace `~/.codex`
+- unmanaged symlink: snapshot the resolved target into a backup, import that
+  snapshot into `base`, then replace `~/.codex`
+- already managed symlink: reconcile state and continue
+
+The deactivated state is always `base`.
+
+## Shell model
+
+Shell mutation is handled by a hook generated from `packagent shell init`.
+
+The hook:
+
+- wraps `packagent activate` and `packagent deactivate`
+- evaluates shell code printed by the Python CLI
+- updates the shell prompt prefix
+- exports `CODEX_HOME` while an environment is active
+
+Direct `packagent activate` calls fail unless the shell hook is being used.
+
+## Extension seams
+
+The code already separates:
+
+- host-specific behavior through `HostAdapter`
+- activation strategy through `ActivationBackend`
+
+That keeps a later `ClaudeHost` or a future per-shell backend from forcing a
+rewrite of the manager or state model.
+

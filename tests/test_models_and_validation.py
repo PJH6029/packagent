@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import pytest
+
+from packagent.models import BackupRecord, EnvMetadata, PackagentState
+from packagent.validation import validate_env_name
+
+
+def test_validate_env_name_accepts_expected_patterns() -> None:
+    assert validate_env_name("codex-with-omx") == "codex-with-omx"
+    assert validate_env_name("v1.2_env") == "v1.2_env"
+
+
+@pytest.mark.parametrize("name", ["", ".", "..", "base", "bad/name", "-oops"])
+def test_validate_env_name_rejects_invalid_names(name: str) -> None:
+    with pytest.raises(Exception):
+        validate_env_name(name)
+
+
+def test_state_serialization_round_trip() -> None:
+    state = PackagentState(
+        schema_version=1,
+        host="codex",
+        base_env="base",
+        active_env="work",
+        managed_home_path="/tmp/home/.codex",
+        managed_root="/tmp/home/.packagent-v1",
+        last_link_target="/tmp/home/.packagent-v1/envs/work/.codex",
+        envs={
+            "base": EnvMetadata(
+                name="base",
+                host="codex",
+                source="imported-home",
+                created_at="2026-04-02T00:00:00Z",
+                imported_from="/tmp/home/.packagent-v1/backups/20260402T000000Z",
+            ),
+            "work": EnvMetadata(
+                name="work",
+                host="codex",
+                source="cloned",
+                created_at="2026-04-02T00:01:00Z",
+                cloned_from="base",
+            ),
+        },
+        backups=[
+            BackupRecord(
+                created_at="2026-04-02T00:00:00Z",
+                reason="takeover_directory",
+                backup_path="/tmp/home/.packagent-v1/backups/20260402T000000Z",
+                original_home="/tmp/home/.codex",
+            ),
+        ],
+    )
+
+    round_tripped = PackagentState.from_dict(state.to_dict())
+
+    assert round_tripped == state
+
