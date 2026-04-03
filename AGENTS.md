@@ -50,6 +50,29 @@ These instructions apply to the entire repository.
   real user `~/.codex` or `~/.packagent-v1`.
 - For shell behavior, test both bash and zsh output when changing the shell hook
   contract.
+- Treat the prepared Docker sandbox as the default end-to-end verification lane
+  whenever user-facing CLI flows, shell integration, Docker setup, or harness
+  onboarding behavior changes.
+- When Docker is available and the change is substantial, run
+  `./scripts/run_docker_sandbox.sh test` before finishing.
+- Keep `scripts/e2e_in_docker.sh` aligned with the current supported workflow.
+  Expand it when behavior changes so the Docker smoke test covers the relevant
+  real-user path instead of relying only on unit tests.
+- Docker scenarios should cover, as relevant to the change:
+  - installing `packagent`
+  - running `packagent init` / shell bootstrap
+  - creating environments
+  - activating an environment
+  - switching between environments
+  - verifying env isolation through writes under `~/.codex`
+  - deactivating back to `base`
+  - removing non-active environments
+  - doctor/repair behavior when link drift matters
+  - uninstalling `packagent`
+  - harness-style or npm-based setup steps when sandbox/tooling changes could
+    affect them
+- For exploratory debugging or manual scenario checks, prefer
+  `./scripts/run_docker_sandbox.sh shell` over touching the real machine state.
 
 ## Development workflow
 
@@ -62,6 +85,8 @@ These instructions apply to the entire repository.
 - Before finishing substantial code changes, run:
   - `./.venv/bin/pytest -q` if the local venv exists
   - `./.venv/bin/python -m build` when packaging behavior changes
+  - `./scripts/run_docker_sandbox.sh test` when the change affects user-facing
+    flows and Docker is available
 - On machines with older `pip`, editable installs may not work with the current
   `pyproject.toml` backend. In that case, use direct test-tool installation or a
   wheel install for smoke checks instead of rewriting packaging just to satisfy
