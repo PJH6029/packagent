@@ -2,18 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import os
 import shutil
 from typing import Dict, List, Optional
 
 from packagent.activation import (
     ActivationBackend,
-    GlobalSymlinkBackend,
+    ENV_HOME_MARKER,
     HOME_KIND_BROKEN_MANAGED,
     HOME_KIND_MANAGED,
     HOME_KIND_MISSING,
     HOME_KIND_UNMANAGED_DIRECTORY,
     HOME_KIND_UNMANAGED_FILE,
     HOME_KIND_UNMANAGED_SYMLINK,
+    default_backend,
 )
 from packagent.errors import UserFacingError
 from packagent.hosts import CodexHost, HostAdapter
@@ -40,7 +42,7 @@ class PackagentManager:
     ) -> None:
         self.paths = paths or PackagentPaths.discover()
         self.host = host or CodexHost()
-        self.backend = backend or GlobalSymlinkBackend()
+        self.backend = backend or default_backend()
 
     def create_env(self, name: str, clone_from: Optional[str] = None) -> EnvMetadata:
         validate_env_name(name)
@@ -81,13 +83,16 @@ class PackagentManager:
                 raise UserFacingError(f"environment '{env_name}' does not exist")
             self._ensure_managed_home(state)
             target = self.backend.activate(self.paths, self.host, env_name)
-            state.active_env = env_name
+            if self.backend.persist_default_env_on_activate():
+                state.default_env = env_name
+            else:
+                state.default_env = state.base_env
             state.last_link_target = str(target)
             self._save_state(state)
             return ActivationResult(
                 env_name=env_name,
                 managed_home_path=str(self.host.managed_home_path(self.paths)),
-                codex_home=str(target),
+                backing_home_path=str(target),
             )
 
     def deactivate_env(self) -> ActivationResult:
@@ -95,23 +100,24 @@ class PackagentManager:
             state = self._ensure_state()
             self._ensure_managed_home(state)
             target = self.backend.activate(self.paths, self.host, state.base_env)
-            state.active_env = state.base_env
+            state.default_env = state.base_env
             state.last_link_target = str(target)
             self._save_state(state)
             return ActivationResult(
                 env_name=state.base_env,
                 managed_home_path=str(self.host.managed_home_path(self.paths)),
-                codex_home=str(target),
+                backing_home_path=str(target),
             )
 
     def list_envs(self) -> List[Dict[str, str]]:
         state = self._ensure_state()
+        current_env = self._current_env(state)
         rows: List[Dict[str, str]] = []
         for name in sorted(state.envs):
             rows.append(
                 {
                     "name": name,
-                    "active": "true" if name == state.active_env else "false",
+                    "active": "true" if name == current_env else "false",
                     "path": str(self.paths.env_dir(name)),
                 },
             )
@@ -120,15 +126,7 @@ class PackagentManager:
     def status(self) -> StatusReport:
         state = self._ensure_state()
         inspection = self.backend.inspect(self.paths, self.host)
-        expected_target = str(self.backend.expected_target(self.paths, self.host, state.active_env))
-        return StatusReport(
-            active_env=state.active_env,
-            managed=inspection.kind in {HOME_KIND_MANAGED, HOME_KIND_BROKEN_MANAGED},
-            managed_home_path=str(self.host.managed_home_path(self.paths)),
-            home_kind=inspection.kind,
-            home_target=inspection.resolved_target,
-            expected_target=expected_target,
-        )
+        return self._build_status(state, inspection)
 
     def remove_env(self, name: str) -> None:
         env_name = validate_env_name(name, allow_base=True)
@@ -136,7 +134,7 @@ class PackagentManager:
             state = self._ensure_state()
             if env_name == state.base_env:
                 raise UserFacingError("cannot remove the built-in 'base' environment")
-            if env_name == state.active_env:
+            if env_name == self._current_env(state):
                 raise UserFacingError(f"cannot remove the active environment '{env_name}'")
             if env_name not in state.envs:
                 raise UserFacingError(f"environment '{env_name}' does not exist")
@@ -148,30 +146,21 @@ class PackagentManager:
         with mutation_lock(self.paths):
             state = self._ensure_state()
             inspection = self.backend.inspect(self.paths, self.host)
-            issues = self._collect_doctor_issues(state, inspection.kind, inspection.managed_env, inspection.resolved_target)
+            issues = self._collect_doctor_issues(state, inspection)
             repaired: List[str] = []
             if fix and issues:
-                repaired.extend(self._repair_state_and_home(state, inspection))
+                repaired.extend(self._repair_state_and_home(state))
                 inspection = self.backend.inspect(self.paths, self.host)
-                issues = self._collect_doctor_issues(
-                    state,
-                    inspection.kind,
-                    inspection.managed_env,
-                    inspection.resolved_target,
-                )
-            status = StatusReport(
-                active_env=state.active_env,
-                managed=inspection.kind in {HOME_KIND_MANAGED, HOME_KIND_BROKEN_MANAGED},
-                managed_home_path=str(self.host.managed_home_path(self.paths)),
-                home_kind=inspection.kind,
-                home_target=inspection.resolved_target,
-                expected_target=str(self.backend.expected_target(self.paths, self.host, state.active_env)),
-            )
+                issues = self._collect_doctor_issues(state, inspection)
+            status = self._build_status(state, inspection)
             return DoctorReport(status=status, issues=issues, repaired=repaired)
 
     def load_state(self) -> PackagentState:
         payload = json.loads(self.paths.state_file.read_text(encoding="utf-8"))
         return PackagentState.from_dict(payload)
+
+    def load_default_env(self) -> str:
+        return self._ensure_state().default_env
 
     def _ensure_state(self) -> PackagentState:
         self.paths.root.mkdir(parents=True, exist_ok=True)
@@ -181,14 +170,17 @@ class PackagentManager:
             state = self.load_state()
         else:
             state = PackagentState(
-                schema_version=1,
+                schema_version=2,
                 host=self.host.name,
                 base_env="base",
-                active_env="base",
+                default_env="base",
                 managed_home_path=str(self.host.managed_home_path(self.paths)),
                 managed_root=str(self.paths.root),
             )
         changed = False
+        if state.schema_version != 2:
+            state.schema_version = 2
+            changed = True
         if state.managed_home_path != str(self.host.managed_home_path(self.paths)):
             state.managed_home_path = str(self.host.managed_home_path(self.paths))
             changed = True
@@ -212,8 +204,11 @@ class PackagentManager:
         for env_name, metadata in list(state.envs.items()):
             self._ensure_env_home(env_name, wipe=False)
             self._write_env_metadata(metadata)
-        if state.active_env not in state.envs:
-            state.active_env = state.base_env
+        if state.default_env not in state.envs:
+            state.default_env = state.base_env
+            changed = True
+        if self.backend.shell_scoped and state.default_env != state.base_env:
+            state.default_env = state.base_env
             changed = True
         if changed or not self.paths.state_file.exists():
             self._save_state(state)
@@ -223,7 +218,9 @@ class PackagentManager:
         write_json(self.paths.state_file, state.to_dict())
 
     def _write_env_metadata(self, metadata: EnvMetadata) -> None:
-        write_json(self.paths.env_metadata_file(metadata.name), metadata.to_dict())
+        payload = metadata.to_dict()
+        write_json(self.paths.env_metadata_file(metadata.name), payload)
+        write_json(self.host.env_home_path(self.paths, metadata.name) / ENV_HOME_MARKER, payload)
 
     def _ensure_env_home(self, env_name: str, *, wipe: bool) -> Path:
         env_dir = self.paths.env_dir(env_name)
@@ -248,7 +245,7 @@ class PackagentManager:
         inspection = self.backend.inspect(self.paths, self.host)
         if inspection.kind == HOME_KIND_MISSING:
             return
-        if inspection.kind == HOME_KIND_MANAGED:
+        if inspection.kind in self.backend.managed_kinds:
             self._reconcile_managed_state(state, inspection.managed_env)
             return
         if inspection.kind == HOME_KIND_BROKEN_MANAGED:
@@ -278,8 +275,6 @@ class PackagentManager:
             )
             state.envs[managed_env] = metadata
             self._write_env_metadata(metadata)
-        if state.active_env not in state.envs:
-            state.active_env = managed_env
 
     def _import_directory_home(self, state: PackagentState) -> None:
         home_path = self.host.managed_home_path(self.paths)
@@ -373,9 +368,7 @@ class PackagentManager:
     def _collect_doctor_issues(
         self,
         state: PackagentState,
-        home_kind: str,
-        managed_env: Optional[str],
-        home_target: Optional[str],
+        inspection,
     ) -> List[str]:
         issues: List[str] = []
         if state.base_env != "base":
@@ -384,30 +377,44 @@ class PackagentManager:
             issues.append("base environment is missing from state")
         if not self.paths.env_dir(state.base_env).exists():
             issues.append("base environment directory is missing")
-        if state.active_env not in state.envs:
-            issues.append(f"active environment '{state.active_env}' is missing from state")
-        if home_kind == HOME_KIND_MISSING:
+        if state.default_env not in state.envs:
+            issues.append(f"default environment '{state.default_env}' is missing from state")
+        if inspection.kind == HOME_KIND_MISSING:
             issues.append(f"{self.host.managed_home_path(self.paths)} is not managed yet")
-        elif home_kind == HOME_KIND_UNMANAGED_DIRECTORY:
+        elif inspection.kind == HOME_KIND_UNMANAGED_DIRECTORY:
             issues.append(f"{self.host.managed_home_path(self.paths)} is an unmanaged directory")
-        elif home_kind == HOME_KIND_UNMANAGED_SYMLINK:
+        elif inspection.kind == HOME_KIND_UNMANAGED_SYMLINK:
             issues.append(f"{self.host.managed_home_path(self.paths)} is an unmanaged symlink")
-        elif home_kind == HOME_KIND_UNMANAGED_FILE:
+        elif inspection.kind == HOME_KIND_UNMANAGED_FILE:
             issues.append(f"{self.host.managed_home_path(self.paths)} is an unmanaged file")
-        elif home_kind == HOME_KIND_BROKEN_MANAGED:
+        elif inspection.kind == HOME_KIND_BROKEN_MANAGED:
             issues.append(f"{self.host.managed_home_path(self.paths)} points to a missing managed target")
-        elif home_kind == HOME_KIND_MANAGED:
-            expected_target = str(self.backend.expected_target(self.paths, self.host, state.active_env))
-            if home_target != expected_target:
-                if managed_env != state.active_env:
-                    issues.append(
-                        f"managed symlink points to '{managed_env}' while state expects '{state.active_env}'",
-                    )
-                else:
-                    issues.append("managed symlink target does not match the expected active environment path")
+        elif inspection.kind in self.backend.managed_kinds:
+            desired_env = self._desired_env(state)
+            if inspection.managed_env and inspection.managed_env not in state.envs:
+                issues.append(f"managed home points to unknown environment '{inspection.managed_env}'")
+            if self.backend.shell_scoped:
+                if inspection.kind != HOME_KIND_MANAGED:
+                    if desired_env and inspection.managed_env and desired_env != inspection.managed_env:
+                        issues.append(
+                            f"managed mount points to '{inspection.managed_env}' while this shell expects '{desired_env}'",
+                        )
+                    elif desired_env and not inspection.managed_env:
+                        issues.append(
+                            f"{self.host.managed_home_path(self.paths)} is not mounted to the current shell environment '{desired_env}'",
+                        )
+            else:
+                expected_target = str(self.backend.expected_target(self.paths, self.host, state.default_env))
+                if inspection.resolved_target != expected_target:
+                    if inspection.managed_env != state.default_env:
+                        issues.append(
+                            f"managed symlink points to '{inspection.managed_env}' while state expects '{state.default_env}'",
+                        )
+                    else:
+                        issues.append("managed symlink target does not match the expected default environment path")
         return issues
 
-    def _repair_state_and_home(self, state: PackagentState, inspection) -> List[str]:
+    def _repair_state_and_home(self, state: PackagentState) -> List[str]:
         repaired: List[str] = []
         if state.base_env not in state.envs:
             metadata = EnvMetadata(
@@ -420,17 +427,54 @@ class PackagentManager:
             self._write_env_metadata(metadata)
             repaired.append("recreated base environment state")
         self._ensure_env_home(state.base_env, wipe=False)
-        if state.active_env not in state.envs:
-            if inspection.managed_env and self.paths.env_dir(inspection.managed_env).exists():
-                self._reconcile_managed_state(state, inspection.managed_env)
-                state.active_env = inspection.managed_env
-                repaired.append(f"adopted '{inspection.managed_env}' as the active environment")
-            else:
-                state.active_env = state.base_env
-                repaired.append("reset active environment to 'base'")
         self._ensure_managed_home(state)
-        target = self.backend.activate(self.paths, self.host, state.active_env)
+        desired_env = self._desired_env(state)
+        if desired_env not in state.envs:
+            desired_env = state.base_env
+            repaired.append("reset the desired environment to 'base'")
+        target = self.backend.activate(self.paths, self.host, desired_env)
+        if self.backend.persist_default_env_on_activate():
+            state.default_env = desired_env
+        else:
+            state.default_env = state.base_env
         state.last_link_target = str(target)
         self._save_state(state)
-        repaired.append(f"repointed managed home to '{state.active_env}'")
+        if self.backend.shell_scoped:
+            repaired.append(f"mounted '{desired_env}' in the current shell")
+        else:
+            repaired.append(f"repointed managed home to '{desired_env}'")
         return repaired
+
+    def _build_status(self, state: PackagentState, inspection) -> StatusReport:
+        return StatusReport(
+            current_env=self._current_env_from_inspection(state, inspection),
+            default_env=state.default_env,
+            managed=inspection.kind in self.backend.managed_kinds,
+            managed_home_path=str(self.host.managed_home_path(self.paths)),
+            home_kind=inspection.kind,
+            home_target=inspection.resolved_target,
+            default_target=str(self.backend.expected_target(self.paths, self.host, state.default_env)),
+        )
+
+    def _current_env(self, state: PackagentState) -> Optional[str]:
+        inspection = self.backend.inspect(self.paths, self.host)
+        return self._current_env_from_inspection(state, inspection)
+
+    def _current_env_from_inspection(self, state: PackagentState, inspection) -> Optional[str]:
+        if inspection.managed_env and inspection.managed_env in state.envs:
+            return inspection.managed_env
+        shell_env = self._shell_env_override(state)
+        if shell_env:
+            return shell_env
+        if not self.backend.shell_scoped:
+            return state.default_env
+        return None
+
+    def _desired_env(self, state: PackagentState) -> str:
+        return self._shell_env_override(state) or state.default_env
+
+    def _shell_env_override(self, state: PackagentState) -> Optional[str]:
+        env_name = os.environ.get("PACKAGENT_ACTIVE_ENV")
+        if env_name and env_name in state.envs:
+            return env_name
+        return None

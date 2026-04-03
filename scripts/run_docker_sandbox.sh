@@ -43,7 +43,7 @@ main() {
   echo "== building docker image: ${image_name} =="
   docker build -f "$repo_root/docker/Dockerfile" -t "$image_name" "$repo_root"
 
-  local docker_args=(--rm)
+  local docker_args=(--rm --privileged)
   if [ -n "${OPENAI_API_KEY:-}" ]; then
     docker_args+=(-e "OPENAI_API_KEY=${OPENAI_API_KEY}")
   fi

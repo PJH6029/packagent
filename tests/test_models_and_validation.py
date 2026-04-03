@@ -19,10 +19,10 @@ def test_validate_env_name_rejects_invalid_names(name: str) -> None:
 
 def test_state_serialization_round_trip() -> None:
     state = PackagentState(
-        schema_version=1,
+        schema_version=2,
         host="codex",
         base_env="base",
-        active_env="work",
+        default_env="base",
         managed_home_path="/tmp/home/.codex",
         managed_root="/tmp/home/.packagent-v1",
         last_link_target="/tmp/home/.packagent-v1/envs/work/.codex",
@@ -56,3 +56,19 @@ def test_state_serialization_round_trip() -> None:
 
     assert round_tripped == state
 
+
+def test_state_deserialization_accepts_legacy_active_env_field() -> None:
+    payload = {
+        "schema_version": 1,
+        "host": "codex",
+        "base_env": "base",
+        "active_env": "work",
+        "managed_home_path": "/tmp/home/.codex",
+        "managed_root": "/tmp/home/.packagent-v1",
+        "envs": {},
+        "backups": [],
+    }
+
+    state = PackagentState.from_dict(payload)
+
+    assert state.default_env == "work"

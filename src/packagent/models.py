@@ -55,7 +55,7 @@ class PackagentState:
     schema_version: int
     host: str
     base_env: str
-    active_env: str
+    default_env: str
     managed_home_path: str
     managed_root: str
     manager_name: str = "packagent-v1"
@@ -77,7 +77,7 @@ class PackagentState:
             schema_version=int(data["schema_version"]),
             host=str(data["host"]),
             base_env=str(data["base_env"]),
-            active_env=str(data["active_env"]),
+            default_env=str(data.get("default_env") or data.get("active_env") or "base"),
             managed_home_path=str(data["managed_home_path"]),
             managed_root=str(data["managed_root"]),
             manager_name=str(data.get("manager_name", "packagent-v1")),
@@ -97,17 +97,18 @@ class PackagentState:
 class ActivationResult:
     env_name: str
     managed_home_path: str
-    codex_home: str
+    backing_home_path: str
 
 
 @dataclass
 class StatusReport:
-    active_env: str
+    current_env: Optional[str]
+    default_env: str
     managed: bool
     managed_home_path: str
     home_kind: str
     home_target: Optional[str]
-    expected_target: str
+    default_target: str
 
 
 @dataclass
@@ -115,4 +116,3 @@ class DoctorReport:
     status: StatusReport
     issues: List[str] = field(default_factory=list)
     repaired: List[str] = field(default_factory=list)
-

@@ -7,7 +7,9 @@ import pytest
 
 from packagent.activation import (
     GlobalSymlinkBackend,
+    LinuxNamespaceBackend,
     HOME_KIND_MANAGED,
+    HOME_KIND_MANAGED_DIRECTORY,
     HOME_KIND_MISSING,
     HOME_KIND_UNMANAGED_DIRECTORY,
     HOME_KIND_UNMANAGED_SYMLINK,
@@ -21,7 +23,8 @@ from packagent.paths import PackagentPaths
 @pytest.fixture()
 def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PackagentManager:
     monkeypatch.setenv("HOME", str(tmp_path))
-    return PackagentManager(paths=PackagentPaths.discover())
+    monkeypatch.setattr("packagent.app.default_backend", lambda: GlobalSymlinkBackend())
+    return PackagentManager(paths=PackagentPaths.discover(), backend=GlobalSymlinkBackend())
 
 
 def test_home_inspection_detects_missing_directory_and_managed_symlink(manager: PackagentManager) -> None:
@@ -169,7 +172,8 @@ def test_cli_shell_init_bootstraps_base_prompt_state(
 
     assert exit_code == 0
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
-    assert f"export CODEX_HOME='{manager.host.env_home_path(manager.paths, 'base')}'" in output
+    assert f"export CODEX_HOME='{manager.host.managed_home_path(manager.paths)}'" in output
+    assert f"export PACKAGENT_BACKING_HOME='{manager.host.env_home_path(manager.paths, 'base')}'" in output
 
 
 def test_cli_init_writes_detected_shell_rc_file(
@@ -220,7 +224,8 @@ def test_cli_deactivate_emits_base_activation_commands(
 
     assert exit_code == 0
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
-    assert f"export CODEX_HOME='{manager.host.env_home_path(manager.paths, 'base')}'" in output
+    assert f"export CODEX_HOME='{manager.host.managed_home_path(manager.paths)}'" in output
+    assert f"export PACKAGENT_BACKING_HOME='{manager.host.env_home_path(manager.paths, 'base')}'" in output
 
 
 def test_cli_list_and_status_are_script_friendly(manager: PackagentManager, capsys: pytest.CaptureFixture[str]) -> None:
@@ -234,4 +239,74 @@ def test_cli_list_and_status_are_script_friendly(manager: PackagentManager, caps
     status_code = main(["status"])
     status_output = capsys.readouterr().out
     assert status_code == 0
-    assert "active_env=base" in status_output
+    assert "current_env=base" in status_output
+    assert "default_env=base" in status_output
+
+
+def test_linux_backend_uses_mountpoint_directory_and_keeps_default_env_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    manager = PackagentManager(
+        paths=PackagentPaths.discover(),
+        backend=LinuxNamespaceBackend(),
+    )
+    manager.create_env("work")
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text):  # noqa: ANN001
+        commands.append(command)
+        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr("packagent.activation.subprocess.run", fake_run)
+
+    result = manager.activate_env("work")
+    state = manager.load_state()
+
+    assert result.managed_home_path == str(manager.host.managed_home_path(manager.paths))
+    assert result.backing_home_path == str(manager.host.env_home_path(manager.paths, "work"))
+    assert state.default_env == "base"
+    assert manager.host.managed_home_path(manager.paths).is_dir()
+    assert manager.host.managed_home_path(manager.paths).joinpath(".packagent-home.json").exists()
+    assert ["mount", "--bind", str(manager.host.env_home_path(manager.paths, "work")), str(manager.host.managed_home_path(manager.paths))] in commands
+
+
+def test_linux_backend_inspects_managed_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    manager = PackagentManager(
+        paths=PackagentPaths.discover(),
+        backend=LinuxNamespaceBackend(),
+    )
+    home = manager.host.managed_home_path(manager.paths)
+    home.mkdir(parents=True)
+    home.joinpath(".packagent-home.json").write_text('{"manager":"packagent-v1"}\n', encoding="utf-8")
+
+    inspection = manager.backend.inspect(manager.paths, manager.host)
+
+    assert inspection.kind == HOME_KIND_MANAGED_DIRECTORY
+
+
+def test_linux_cli_activate_requires_packagent_managed_namespace_shell(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("packagent.app.default_backend", lambda: LinuxNamespaceBackend())
+    manager = PackagentManager(
+        paths=PackagentPaths.discover(),
+        backend=LinuxNamespaceBackend(),
+    )
+    manager.create_env("work")
+    monkeypatch.setenv("PACKAGENT_SHELL_HOOK", "1")
+    monkeypatch.setenv("PACKAGENT_SHELL", "bash")
+
+    exit_code = main(["activate", "work"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "packagent-managed shell" in captured.err

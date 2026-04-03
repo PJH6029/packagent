@@ -66,29 +66,39 @@ def test_shell_init_can_bootstrap_the_current_env() -> None:
     result = ActivationResult(
         env_name="base",
         managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/base/.codex",
+        backing_home_path="/tmp/home/.packagent-v1/envs/base/.codex",
     )
     script = render_shell_init("bash", result)
 
     assert "export PACKAGENT_ACTIVE_ENV='base'" in script
-    assert "export CODEX_HOME='/tmp/home/.packagent-v1/envs/base/.codex'" in script
+    assert "export CODEX_HOME='/tmp/home/.codex'" in script
+    assert "export PACKAGENT_BACKING_HOME='/tmp/home/.packagent-v1/envs/base/.codex'" in script
 
 
 def test_activate_and_deactivate_shell_commands_are_export_friendly() -> None:
     result = ActivationResult(
         env_name="work",
         managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/work/.codex",
+        backing_home_path="/tmp/home/.packagent-v1/envs/work/.codex",
     )
     activate_script = render_activate_commands("zsh", result)
     deactivate_result = ActivationResult(
         env_name="base",
         managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/base/.codex",
+        backing_home_path="/tmp/home/.packagent-v1/envs/base/.codex",
     )
     deactivate_script = render_deactivate_commands("zsh", deactivate_result)
 
     assert "export PACKAGENT_ACTIVE_ENV='work'" in activate_script
-    assert "export CODEX_HOME='/tmp/home/.packagent-v1/envs/work/.codex'" in activate_script
+    assert "export CODEX_HOME='/tmp/home/.codex'" in activate_script
+    assert "export PACKAGENT_BACKING_HOME='/tmp/home/.packagent-v1/envs/work/.codex'" in activate_script
     assert "export PACKAGENT_ACTIVE_ENV='base'" in deactivate_script
-    assert "export CODEX_HOME='/tmp/home/.packagent-v1/envs/base/.codex'" in deactivate_script
+    assert "export CODEX_HOME='/tmp/home/.codex'" in deactivate_script
+    assert "export PACKAGENT_BACKING_HOME='/tmp/home/.packagent-v1/envs/base/.codex'" in deactivate_script
+
+
+def test_linux_shell_init_contains_namespace_entry_block() -> None:
+    script = render_shell_init("bash", use_linux_namespace=True)
+
+    assert "packagent shell supports-namespace" in script
+    assert "exec packagent shell enter bash" in script

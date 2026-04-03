@@ -40,6 +40,10 @@ def shell_hook_error_message(shell_name: str | None = None) -> str:
     return f"activation must be run through the shell hook. Run: eval \"$(packagent shell init {shell_name})\""
 
 
+def namespace_shell_error_message() -> str:
+    return "linux per-shell activation requires entering a packagent-managed shell via 'packagent init' or 'packagent shell init'"
+
+
 def default_rc_path(shell_name: str, home: Path | None = None) -> Path:
     _validate_shell(shell_name)
     root = home or Path.home()
@@ -58,16 +62,30 @@ def install_shell_init(shell_name: str, rc_path: Path) -> ShellInitInstallResult
     return ShellInitInstallResult(shell_name=shell_name, rc_path=str(rc_path), changed=changed)
 
 
-def render_shell_init(shell_name: str, initial_result: ActivationResult | None = None) -> str:
+def render_shell_init(
+    shell_name: str,
+    initial_result: ActivationResult | None = None,
+    *,
+    use_linux_namespace: bool = False,
+) -> str:
     if shell_name == "bash":
-        script = _render_bash_init()
+        script = _render_bash_init(use_linux_namespace=use_linux_namespace)
     elif shell_name == "zsh":
-        script = _render_zsh_init()
+        script = _render_zsh_init(use_linux_namespace=use_linux_namespace)
     else:
         raise ValueError(f"unsupported shell: {shell_name}")
     if initial_result is None:
         return script
-    return f"{script}\n{render_activate_commands(shell_name, initial_result)}"
+    activate_block = render_activate_commands(shell_name, initial_result)
+    if use_linux_namespace:
+        activate_block = "\n".join(
+            [
+                'if [ -n "${PACKAGENT_NAMESPACE_ACTIVE-}" ]; then',
+                _indent_block(activate_block),
+                "fi",
+            ],
+        )
+    return f"{script}\n{activate_block}"
 
 
 def render_shell_rc_block(shell_name: str) -> str:
@@ -88,7 +106,8 @@ def render_activate_commands(shell_name: str, result: ActivationResult) -> str:
     lines = [
         f"export PACKAGENT_ACTIVE_ENV={_shell_quote(result.env_name)}",
         f"export PACKAGENT_ACTIVE_HOST={_shell_quote('codex')}",
-        f"export CODEX_HOME={_shell_quote(result.codex_home)}",
+        f"export PACKAGENT_BACKING_HOME={_shell_quote(result.backing_home_path)}",
+        f"export CODEX_HOME={_shell_quote(result.managed_home_path)}",
         "_packagent_refresh_prompt >/dev/null 2>&1 || true",
     ]
     return "\n".join(lines)
@@ -197,64 +216,84 @@ def _upsert_init_block(existing: str, block: str) -> str:
     return prefix + normalized_block
 
 
-def _render_bash_init() -> str:
-    return """
-if [ -z "${PACKAGENT_ORIGINAL_PS1+x}" ]; then
-  export PACKAGENT_ORIGINAL_PS1="${PS1-}"
+def _render_bash_init(*, use_linux_namespace: bool) -> str:
+    namespace_block = _render_linux_namespace_block("bash") if use_linux_namespace else ""
+    return f"""
+{namespace_block}
+if [ -z "${{PACKAGENT_ORIGINAL_PS1+x}}" ]; then
+  export PACKAGENT_ORIGINAL_PS1="${{PS1-}}"
 fi
-_packagent_original_prompt_command="${PROMPT_COMMAND-}"
-_packagent_refresh_prompt() {
-  local base_prompt="${PACKAGENT_ORIGINAL_PS1-}"
-  if [ -n "${PACKAGENT_ACTIVE_ENV-}" ]; then
-    PS1="(${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+_packagent_original_prompt_command="${{PROMPT_COMMAND-}}"
+_packagent_refresh_prompt() {{
+  local base_prompt="${{PACKAGENT_ORIGINAL_PS1-}}"
+  if [ -n "${{PACKAGENT_ACTIVE_ENV-}}" ]; then
+    PS1="(${{PACKAGENT_ACTIVE_ENV}}) ${{base_prompt}}"
   else
-    PS1="${base_prompt}"
+    PS1="${{base_prompt}}"
   fi
-}
-_packagent_prompt_command() {
-  if [ -n "${_packagent_original_prompt_command-}" ]; then
-    eval "${_packagent_original_prompt_command}"
+}}
+_packagent_prompt_command() {{
+  if [ -n "${{_packagent_original_prompt_command-}}" ]; then
+    eval "${{_packagent_original_prompt_command}}"
   fi
   _packagent_refresh_prompt
-}
+}}
 PROMPT_COMMAND="_packagent_prompt_command"
-packagent() {
+packagent() {{
   if [ "$1" = "activate" ] || [ "$1" = "deactivate" ]; then
     local _packagent_output
     _packagent_output="$(PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=bash command packagent "$@")" || return $?
-    eval "${_packagent_output}"
+    eval "${{_packagent_output}}"
     return 0
   fi
   command packagent "$@"
-}
+}}
 _packagent_refresh_prompt
 """.strip()
 
 
-def _render_zsh_init() -> str:
-    return """
-if [[ -z "${PACKAGENT_ORIGINAL_PROMPT+x}" ]]; then
-  export PACKAGENT_ORIGINAL_PROMPT="${PROMPT-}"
+def _render_zsh_init(*, use_linux_namespace: bool) -> str:
+    namespace_block = _render_linux_namespace_block("zsh") if use_linux_namespace else ""
+    return f"""
+{namespace_block}
+if [[ -z "${{PACKAGENT_ORIGINAL_PROMPT+x}}" ]]; then
+  export PACKAGENT_ORIGINAL_PROMPT="${{PROMPT-}}"
 fi
-_packagent_refresh_prompt() {
-  local base_prompt="${PACKAGENT_ORIGINAL_PROMPT-}"
-  if [[ -n "${PACKAGENT_ACTIVE_ENV-}" ]]; then
-    PROMPT="(${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+_packagent_refresh_prompt() {{
+  local base_prompt="${{PACKAGENT_ORIGINAL_PROMPT-}}"
+  if [[ -n "${{PACKAGENT_ACTIVE_ENV-}}" ]]; then
+    PROMPT="(${{PACKAGENT_ACTIVE_ENV}}) ${{base_prompt}}"
   else
-    PROMPT="${base_prompt}"
+    PROMPT="${{base_prompt}}"
   fi
-}
-if (( ${precmd_functions[(I)_packagent_refresh_prompt]} == 0 )); then
+}}
+if (( ${{precmd_functions[(I)_packagent_refresh_prompt]}} == 0 )); then
   precmd_functions+=(_packagent_refresh_prompt)
 fi
-packagent() {
+packagent() {{
   if [[ "$1" == "activate" || "$1" == "deactivate" ]]; then
     local _packagent_output
     _packagent_output="$(PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=zsh command packagent "$@")" || return $?
-    eval "${_packagent_output}"
+    eval "${{_packagent_output}}"
     return 0
   fi
   command packagent "$@"
-}
+}}
 _packagent_refresh_prompt
 """.strip()
+
+
+def _render_linux_namespace_block(shell_name: str) -> str:
+    return f"""
+if [ -z "${{PACKAGENT_NAMESPACE_ACTIVE-}}" ]; then
+  if command packagent shell supports-namespace >/dev/null 2>&1; then
+    exec packagent shell enter {shell_name}
+  else
+    command packagent shell supports-namespace
+  fi
+fi
+""".strip()
+
+
+def _indent_block(value: str, prefix: str = "  ") -> str:
+    return "\n".join(f"{prefix}{line}" if line else line for line in value.splitlines())

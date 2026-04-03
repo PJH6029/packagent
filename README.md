@@ -1,10 +1,14 @@
 # packagent
 
 `packagent` is a small Python CLI that isolates user-level Codex homes under
-`~/.packagent-v1/envs/<env>/.codex` and switches the real `~/.codex` path with a
-managed symlink. The goal is compatibility with harnesses that still assume a
-single `~/.codex` home, while keeping those harness-specific files separated by
-environment.
+`~/.packagent-v1/envs/<env>/.codex` while preserving `~/.codex` as the path that
+Codex and harnesses see.
+
+On Linux, `packagent` provides true per-shell activation by running
+packagent-managed shells inside private user+mount namespaces and bind-mounting
+the selected env onto `~/.codex` in that shell only. On macOS, `packagent`
+keeps the current global symlink model because macOS does not offer the same
+per-shell mount namespace mechanism.
 
 ## Why this exists
 
@@ -47,7 +51,8 @@ source ~/.zshrc  # use ~/.bashrc on bash
 ```
 
 `packagent init` detects `bash` or `zsh`, writes a managed bootstrap block into
-the right rc file, and leaves your shell in `(base)` after you reload it.
+the right rc file, and leaves your shell in `(base)` after you reload it. On
+Linux, that reload re-enters the shell once into a packagent-managed namespace.
 
 Low-level manual hook setup is still available if you want it:
 
@@ -69,8 +74,9 @@ npm install -g @openai/codex oh-my-codex
 omx setup
 ```
 
-All writes to `~/.codex` land inside the active environment's
-`~/.packagent-v1/envs/codex-with-omx/.codex`.
+All writes to `~/.codex` land inside the active environment's backing home,
+such as `~/.packagent-v1/envs/codex-with-omx/.codex`, while `CODEX_HOME`
+continues to point at the abstraction path `~/.codex`.
 
 Return to the default base environment:
 
@@ -99,7 +105,10 @@ prompt state.
 
 `packagent` v1:
 
-- manages `~/.codex` with a single global active environment
+- keeps `~/.codex` as the user-facing Codex home path
+- supports true concurrent per-shell `~/.codex` activation on Linux inside
+  packagent-managed bash and zsh shells
+- keeps a single global managed home on macOS through the symlink backend
 - keeps a permanent `base` environment
 - backs up an existing unmanaged `~/.codex` on first takeover
 - is designed for macOS and Linux only
@@ -109,7 +118,7 @@ prompt state.
 - install Codex or harness packages
 - isolate trusted repo-local `.codex/config.toml` layers
 - isolate repo/system instruction files that Codex also loads
-- support different active environments in different terminals at the same time
+- provide exact concurrent same-path activation on macOS
 
 ## Development
 
@@ -155,6 +164,7 @@ That flow exercises:
 - creating and activating environments
 - writing harness-like files into the active `~/.codex`
 - switching envs and verifying isolation
+- activating different envs in different Linux shells at the same time
 - `doctor --fix`
 - deactivation
 - environment removal
@@ -193,6 +203,8 @@ Notes:
 - The Docker sandbox is for safe user-home testing. It does not isolate
   repo-local trusted `.codex/` layers inside mounted projects, just like normal
   `packagent` behavior.
+- The Docker smoke test exercises the Linux namespace backend. macOS keeps the
+  global symlink activation model instead.
 - This repo's current workspace does not include Docker, so the shell scripts
   are provided and syntax-checked here, but the image build itself must be run
   on a machine with Docker installed.
