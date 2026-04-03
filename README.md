@@ -137,6 +137,10 @@ What the sandbox image includes:
 - `@openai/codex`
 - bash and zsh
 
+Inside the sandbox, npm global installs are configured to use the test user's
+`~/.local` prefix, so commands like `npm install -g oh-my-codex` work without
+root.
+
 Run the scripted end-to-end smoke flow:
 
 ```bash

@@ -24,7 +24,9 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages \
 
 RUN npm install -g @openai/codex
 
-RUN useradd --create-home --shell /bin/bash tester
+RUN useradd --create-home --shell /bin/bash tester \
+ && mkdir -p /home/tester/.local/bin /home/tester/.local/lib /home/tester/.npm \
+ && chown -R tester:tester /home/tester
 
 WORKDIR /workspace
 COPY . /workspace
@@ -32,8 +34,8 @@ RUN chown -R tester:tester /workspace
 
 USER tester
 ENV HOME=/home/tester
+ENV NPM_CONFIG_PREFIX=/home/tester/.local
 ENV PATH=/home/tester/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bash"]
-

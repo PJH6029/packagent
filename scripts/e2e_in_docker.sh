@@ -71,6 +71,14 @@ EOF
   assert_path_exists "$base_home/AGENTS.md"
   grep -q "Legacy AGENTS content" "$base_home/AGENTS.md" || fail "base env did not import legacy home"
 
+  echo "== verify npm global installs work for the sandbox user =="
+  [ "$(npm config get prefix)" = "$HOME/.local" ] || fail "npm global prefix is not user-local"
+  npm install -g @openai/codex oh-my-codex >/tmp/packagent-npm-install.txt 2>&1 || {
+    cat /tmp/packagent-npm-install.txt >&2
+    fail "npm global install failed for sandbox user"
+  }
+  command -v omx >/dev/null || fail "omx was not installed into the sandbox user's PATH"
+
   echo "== simulate harness writing into active home =="
   mkdir -p "$HOME/.codex/skills/demo-skill"
   cat > "$HOME/.codex/skills/demo-skill/SKILL.md" <<'EOF'

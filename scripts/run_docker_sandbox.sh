@@ -60,6 +60,9 @@ Install the local checkout with:
   packagent init
   source ~/.bashrc
 
+This sandbox also configures npm global installs under ~/.local, so
+`npm install -g ...` works without root.
+
 `uv tool install packagent` will fail here until packagent is published to a
 package index.
 EOF
