@@ -87,7 +87,8 @@ def render_activate_commands(shell_name: str, result: ActivationResult) -> str:
     _validate_shell(shell_name)
     lines = [
         f"export PACKAGENT_ACTIVE_ENV={_shell_quote(result.env_name)}",
-        f"export PACKAGENT_ACTIVE_HOST={_shell_quote('codex')}",
+        f"export PACKAGENT_ACTIVE_PROVIDER={_shell_quote(result.provider)}",
+        f"export PACKAGENT_ACTIVE_HOST={_shell_quote(result.provider)}",
         "_packagent_refresh_prompt >/dev/null 2>&1 || true",
     ]
     return "\n".join(lines)
@@ -205,7 +206,12 @@ _packagent_original_prompt_command="${PROMPT_COMMAND-}"
 _packagent_refresh_prompt() {
   local base_prompt="${PACKAGENT_ORIGINAL_PS1-}"
   if [ -n "${PACKAGENT_ACTIVE_ENV-}" ]; then
-    PS1="(${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+    local provider="${PACKAGENT_ACTIVE_PROVIDER-}"
+    if [ -n "${provider}" ]; then
+      PS1="(${provider}:${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+    else
+      PS1="(${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+    fi
   else
     PS1="${base_prompt}"
   fi
@@ -238,7 +244,12 @@ fi
 _packagent_refresh_prompt() {
   local base_prompt="${PACKAGENT_ORIGINAL_PROMPT-}"
   if [[ -n "${PACKAGENT_ACTIVE_ENV-}" ]]; then
-    PROMPT="(${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+    local provider="${PACKAGENT_ACTIVE_PROVIDER-}"
+    if [[ -n "${provider}" ]]; then
+      PROMPT="(${provider}:${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+    else
+      PROMPT="(${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+    fi
   else
     PROMPT="${base_prompt}"
   fi

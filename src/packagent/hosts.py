@@ -4,6 +4,7 @@ from abc import ABC
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import Dict, Tuple
 
 from packagent.paths import PackagentPaths
 
@@ -28,3 +29,19 @@ class HostAdapter(ABC):
 class CodexHost(HostAdapter):
     def __init__(self) -> None:
         super().__init__(name="codex", home_dir_name=".codex", home_env_var="CODEX_HOME")
+
+
+class ClaudeHost(HostAdapter):
+    def __init__(self) -> None:
+        super().__init__(name="claude", home_dir_name=".claude", home_env_var="CLAUDE_CONFIG_DIR")
+
+
+def default_hosts() -> Tuple[HostAdapter, ...]:
+    return (CodexHost(), ClaudeHost())
+
+
+def default_host_map() -> Dict[str, HostAdapter]:
+    return {host.name: host for host in default_hosts()}
+
+
+SUPPORTED_PROVIDERS = tuple(host.name for host in default_hosts())

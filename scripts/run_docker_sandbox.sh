@@ -14,6 +14,7 @@ Modes:
 Environment:
   IMAGE_NAME        Override the docker image tag (default: packagent-e2e)
   OPENAI_API_KEY    Passed through to the container if set
+  ANTHROPIC_API_KEY Passed through to the container if set
 EOF
 }
 
@@ -46,6 +47,9 @@ main() {
   local docker_args=(--rm)
   if [ -n "${OPENAI_API_KEY:-}" ]; then
     docker_args+=(-e "OPENAI_API_KEY=${OPENAI_API_KEY}")
+  fi
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    docker_args+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
   fi
 
   if [ "$mode" = "test" ]; then

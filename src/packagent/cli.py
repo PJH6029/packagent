@@ -9,6 +9,7 @@ from typing import Sequence
 
 from packagent.app import PackagentManager
 from packagent.errors import UserFacingError
+from packagent.hosts import SUPPORTED_PROVIDERS
 from packagent.models import ActivationResult, DoctorReport, StatusReport
 from packagent.shell import (
     SUPPORTED_SHELLS,
@@ -38,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_parser = subparsers.add_parser("create", help="create an environment")
     create_parser.add_argument("-n", "--name", required=True)
     create_parser.add_argument("--clone")
+    create_parser.add_argument("--provider", choices=SUPPORTED_PROVIDERS)
 
     activate_parser = subparsers.add_parser("activate", help="activate an environment")
     activate_parser.add_argument("name")
@@ -63,16 +65,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             status = manager.status()
             initial_result = ActivationResult(
                 env_name=status.active_env,
-                managed_home_path=status.managed_home_path,
-                codex_home=status.expected_target,
+                provider=status.provider,
             )
             print(render_shell_init(args.shell, initial_result))
             return 0
         if args.command == "init":
             return _handle_init(manager, args.shell, args.rc_file)
         if args.command == "create":
-            metadata = manager.create_env(args.name, clone_from=args.clone)
-            print(f"created\t{metadata.name}\t{manager.paths.env_dir(metadata.name)}")
+            metadata = manager.create_env(args.name, clone_from=args.clone, provider=args.provider)
+            print(f"created\t{metadata.name}\t{metadata.provider}\t{manager.paths.env_dir(metadata.name)}")
             return 0
         if args.command == "activate":
             return _handle_activate(manager, args.name)
@@ -81,7 +82,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "list":
             rows = manager.list_envs()
             for row in rows:
-                print(f"{row['active']}\t{row['name']}\t{row['path']}")
+                print(f"{row['active']}\t{row['provider']}\t{row['name']}\t{row['path']}")
             return 0
         if args.command == "status":
             _print_status(manager.status())
@@ -148,11 +149,14 @@ def _current_shell() -> str:
 
 def _print_status(status: StatusReport) -> None:
     print(f"active_env={status.active_env}")
-    print(f"managed={str(status.managed).lower()}")
-    print(f"managed_home={status.managed_home_path}")
-    print(f"home_kind={status.home_kind}")
-    print(f"home_target={status.home_target or ''}")
-    print(f"expected_target={status.expected_target}")
+    print(f"provider={status.provider}")
+    for provider in sorted(status.providers):
+        provider_status = status.providers[provider]
+        print(f"{provider}_managed={str(provider_status.managed).lower()}")
+        print(f"{provider}_managed_home={provider_status.managed_home_path}")
+        print(f"{provider}_home_kind={provider_status.home_kind}")
+        print(f"{provider}_home_target={provider_status.home_target or ''}")
+        print(f"{provider}_expected_target={provider_status.expected_target}")
 
 
 def _print_doctor(report: DoctorReport) -> None:

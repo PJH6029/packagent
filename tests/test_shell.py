@@ -18,6 +18,7 @@ def test_bash_shell_init_contains_wrapper_and_prompt_hook() -> None:
     assert 'packagent() {' in script
     assert 'PROMPT_COMMAND="_packagent_prompt_command"' in script
     assert 'PACKAGENT_SHELL=bash' in script
+    assert '(${provider}:${PACKAGENT_ACTIVE_ENV})' in script
 
 
 def test_zsh_shell_init_contains_wrapper_and_precmd_hook() -> None:
@@ -25,6 +26,7 @@ def test_zsh_shell_init_contains_wrapper_and_precmd_hook() -> None:
     assert 'packagent() {' in script
     assert "precmd_functions+=(_packagent_refresh_prompt)" in script
     assert 'PACKAGENT_SHELL=zsh' in script
+    assert '(${provider}:${PACKAGENT_ACTIVE_ENV})' in script
 
 
 def test_detect_shell_prefers_process_tree_over_login_shell(monkeypatch) -> None:
@@ -63,32 +65,26 @@ def test_install_shell_init_writes_managed_block_idempotently(tmp_path: Path) ->
 
 
 def test_shell_init_can_bootstrap_the_current_env() -> None:
-    result = ActivationResult(
-        env_name="base",
-        managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/base/.codex",
-    )
+    result = ActivationResult(env_name="base", provider="codex")
     script = render_shell_init("bash", result)
 
     assert "export PACKAGENT_ACTIVE_ENV='base'" in script
+    assert "export PACKAGENT_ACTIVE_PROVIDER='codex'" in script
     assert "export CODEX_HOME=" not in script
+    assert "export CLAUDE_CONFIG_DIR=" not in script
 
 
 def test_activate_and_deactivate_shell_commands_are_export_friendly() -> None:
-    result = ActivationResult(
-        env_name="work",
-        managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/work/.codex",
-    )
+    result = ActivationResult(env_name="work", provider="claude")
     activate_script = render_activate_commands("zsh", result)
-    deactivate_result = ActivationResult(
-        env_name="base",
-        managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/base/.codex",
-    )
+    deactivate_result = ActivationResult(env_name="base", provider="codex")
     deactivate_script = render_deactivate_commands("zsh", deactivate_result)
 
     assert "export PACKAGENT_ACTIVE_ENV='work'" in activate_script
+    assert "export PACKAGENT_ACTIVE_PROVIDER='claude'" in activate_script
     assert "export CODEX_HOME=" not in activate_script
+    assert "export CLAUDE_CONFIG_DIR=" not in activate_script
     assert "export PACKAGENT_ACTIVE_ENV='base'" in deactivate_script
+    assert "export PACKAGENT_ACTIVE_PROVIDER='codex'" in deactivate_script
     assert "export CODEX_HOME=" not in deactivate_script
+    assert "export CLAUDE_CONFIG_DIR=" not in deactivate_script
