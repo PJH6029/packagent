@@ -109,6 +109,18 @@ def test_deactivate_restores_base(manager: PackagentManager) -> None:
     assert manager.host.managed_home_path(manager.paths).resolve() == base_home
 
 
+def test_activation_uses_existing_codex_home_path(manager: PackagentManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    custom_home = manager.paths.home / ".config" / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(custom_home))
+
+    manager.create_env("work")
+    result = manager.activate_env("work")
+
+    assert Path(result.managed_home_path) == custom_home
+    assert custom_home.is_symlink()
+    assert custom_home.resolve() == manager.host.env_home_path(manager.paths, "work")
+
+
 def test_create_clone_base_copies_home_contents(manager: PackagentManager) -> None:
     manager.status()
     base_home = manager.host.env_home_path(manager.paths, "base")
@@ -169,7 +181,7 @@ def test_cli_shell_init_bootstraps_base_prompt_state(
 
     assert exit_code == 0
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
-    assert f"export CODEX_HOME='{manager.host.env_home_path(manager.paths, 'base')}'" in output
+    assert "export CODEX_HOME=" not in output
 
 
 def test_cli_init_writes_detected_shell_rc_file(
@@ -220,7 +232,7 @@ def test_cli_deactivate_emits_base_activation_commands(
 
     assert exit_code == 0
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
-    assert f"export CODEX_HOME='{manager.host.env_home_path(manager.paths, 'base')}'" in output
+    assert "export CODEX_HOME=" not in output
 
 
 def test_cli_list_and_status_are_script_friendly(manager: PackagentManager, capsys: pytest.CaptureFixture[str]) -> None:

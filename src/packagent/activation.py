@@ -81,6 +81,7 @@ class GlobalSymlinkBackend(ActivationBackend):
     def activate(self, paths: PackagentPaths, host: HostAdapter, env_name: str) -> Path:
         home_path = host.managed_home_path(paths)
         target = self.expected_target(paths, host, env_name)
+        home_path.parent.mkdir(parents=True, exist_ok=True)
         target.parent.mkdir(parents=True, exist_ok=True)
         if home_path.is_symlink() or home_path.is_file():
             home_path.unlink()
@@ -110,4 +111,3 @@ class GlobalSymlinkBackend(ActivationBackend):
         if tail != host.home_dir_name:
             return None
         return env_name
-

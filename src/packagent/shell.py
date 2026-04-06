@@ -88,7 +88,6 @@ def render_activate_commands(shell_name: str, result: ActivationResult) -> str:
     lines = [
         f"export PACKAGENT_ACTIVE_ENV={_shell_quote(result.env_name)}",
         f"export PACKAGENT_ACTIVE_HOST={_shell_quote('codex')}",
-        f"export CODEX_HOME={_shell_quote(result.codex_home)}",
         "_packagent_refresh_prompt >/dev/null 2>&1 || true",
     ]
     return "\n".join(lines)

@@ -5,9 +5,10 @@
 ## Core pieces
 
 - `CodexHost`: host-specific path rules for the managed home, currently
-  `~/.codex` and `envs/<name>/.codex`
-- `GlobalSymlinkBackend`: activation backend that points the real host home at
-  one managed environment at a time
+  `CODEX_HOME` when it is already set, otherwise `~/.codex`, plus
+  `envs/<name>/.codex`
+- `GlobalSymlinkBackend`: activation backend that points the managed Codex home
+  path at one managed environment at a time
 - `PackagentManager`: state loading, takeover, create/clone/remove, activation,
   status, and doctor workflows
 - `shell.py`: generated bash/zsh shell hook plus shell command rendering for
@@ -27,13 +28,14 @@ Each environment also contains a small hidden metadata file at
 
 ## First-run takeover
 
-When activation happens for the first time, `packagent` inspects `~/.codex`:
+When activation happens for the first time, `packagent` inspects the managed
+Codex home path (`CODEX_HOME` when set, otherwise `~/.codex`):
 
 - missing path: create a managed symlink
 - unmanaged directory: move it into `backups/<timestamp>/`, import it into
-  `base`, then replace `~/.codex`
+  `base`, then replace the managed home path
 - unmanaged symlink: snapshot the resolved target into a backup, import that
-  snapshot into `base`, then replace `~/.codex`
+  snapshot into `base`, then replace the managed home path
 - already managed symlink: reconcile state and continue
 
 The deactivated state is always `base`.
@@ -50,7 +52,7 @@ The hook itself:
 - evaluates shell code printed by the Python CLI
 - bootstraps the shell to the manager's current active env, usually `base`
 - updates the shell prompt prefix
-- exports `CODEX_HOME` for the current active env, including `base`
+- leaves any existing `CODEX_HOME` export untouched
 
 Direct `packagent activate` calls fail unless the shell hook is being used.
 

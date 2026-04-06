@@ -71,7 +71,7 @@ def test_shell_init_can_bootstrap_the_current_env() -> None:
     script = render_shell_init("bash", result)
 
     assert "export PACKAGENT_ACTIVE_ENV='base'" in script
-    assert "export CODEX_HOME='/tmp/home/.packagent-v1/envs/base/.codex'" in script
+    assert "export CODEX_HOME=" not in script
 
 
 def test_activate_and_deactivate_shell_commands_are_export_friendly() -> None:
@@ -89,6 +89,6 @@ def test_activate_and_deactivate_shell_commands_are_export_friendly() -> None:
     deactivate_script = render_deactivate_commands("zsh", deactivate_result)
 
     assert "export PACKAGENT_ACTIVE_ENV='work'" in activate_script
-    assert "export CODEX_HOME='/tmp/home/.packagent-v1/envs/work/.codex'" in activate_script
+    assert "export CODEX_HOME=" not in activate_script
     assert "export PACKAGENT_ACTIVE_ENV='base'" in deactivate_script
-    assert "export CODEX_HOME='/tmp/home/.packagent-v1/envs/base/.codex'" in deactivate_script
+    assert "export CODEX_HOME=" not in deactivate_script

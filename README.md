@@ -1,14 +1,18 @@
 # packagent
 
 `packagent` is a small Python CLI that isolates user-level Codex homes under
-`~/.packagent-v1/envs/<env>/.codex` and switches the real `~/.codex` path with a
-managed symlink. The goal is compatibility with harnesses that still assume a
-single `~/.codex` home, while keeping those harness-specific files separated by
+`~/.packagent-v1/envs/<env>/.codex` and switches the active managed Codex home
+path with a symlink. The goal is compatibility with harnesses that still assume
+a single Codex home, while keeping those harness-specific files separated by
 environment.
+
+If `CODEX_HOME` is already set in your shell, `packagent` uses that path as the
+managed Codex home instead of `~/.codex`. It does not export or rewrite
+`CODEX_HOME` for you.
 
 ## Why this exists
 
-Agent harnesses often install into `~/.codex` directly:
+Agent harnesses often install into the Codex home directly:
 
 - `AGENTS.md`
 - `skills/`
@@ -69,8 +73,10 @@ npm install -g @openai/codex oh-my-codex
 omx setup
 ```
 
-All writes to `~/.codex` land inside the active environment's
-`~/.packagent-v1/envs/codex-with-omx/.codex`.
+All writes to the managed Codex home path land inside the active environment's
+`~/.packagent-v1/envs/codex-with-omx/.codex`. By default that managed path is
+`~/.codex`, but if you already export `CODEX_HOME`, `packagent` will manage
+that path instead.
 
 Return to the default base environment:
 
@@ -99,9 +105,10 @@ prompt state.
 
 `packagent` v1:
 
-- manages `~/.codex` with a single global active environment
+- manages a single global active Codex home path
+- respects a pre-set `CODEX_HOME` path instead of exporting one itself
 - keeps a permanent `base` environment
-- backs up an existing unmanaged `~/.codex` on first takeover
+- backs up an existing unmanaged home path on first takeover
 - is designed for macOS and Linux only
 
 `packagent` v1 does not:
@@ -151,9 +158,9 @@ That flow exercises:
 
 - installing `packagent` with `uv tool install`
 - installing shell integration with `packagent init`
-- first-run takeover of an unmanaged `~/.codex`
+- first-run takeover of an unmanaged Codex home path
 - creating and activating environments
-- writing harness-like files into the active `~/.codex`
+- writing harness-like files into the active managed home path
 - switching envs and verifying isolation
 - `doctor --fix`
 - deactivation
@@ -166,8 +173,9 @@ Open an interactive shell for manual testing:
 ./scripts/run_docker_sandbox.sh shell
 ```
 
-Inside the container, the test user home is `/home/tester`, so all `~/.codex`
-and `~/.packagent-v1` mutations stay isolated inside the container.
+Inside the container, the test user home is `/home/tester`, so all managed home
+path mutations and `~/.packagent-v1` mutations stay isolated inside the
+container.
 
 The repo itself is copied into the container at `/workspace`. Because
 `packagent` is not published to a package index yet, install the local checkout
