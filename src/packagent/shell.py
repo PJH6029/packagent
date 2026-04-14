@@ -201,7 +201,13 @@ def _render_bash_init() -> str:
 if [ -z "${PACKAGENT_ORIGINAL_PS1+x}" ]; then
   export PACKAGENT_ORIGINAL_PS1="${PS1-}"
 fi
-_packagent_original_prompt_command="${PROMPT_COMMAND-}"
+if [ -z "${PACKAGENT_ORIGINAL_PROMPT_COMMAND+x}" ]; then
+  if [ "${PROMPT_COMMAND-}" = "_packagent_prompt_command" ]; then
+    PACKAGENT_ORIGINAL_PROMPT_COMMAND=""
+  else
+    PACKAGENT_ORIGINAL_PROMPT_COMMAND="${PROMPT_COMMAND-}"
+  fi
+fi
 _packagent_refresh_prompt() {
   local base_prompt="${PACKAGENT_ORIGINAL_PS1-}"
   if [ -n "${PACKAGENT_ACTIVE_ENV-}" ]; then
@@ -211,8 +217,8 @@ _packagent_refresh_prompt() {
   fi
 }
 _packagent_prompt_command() {
-  if [ -n "${_packagent_original_prompt_command-}" ]; then
-    eval "${_packagent_original_prompt_command}"
+  if [ -n "${PACKAGENT_ORIGINAL_PROMPT_COMMAND-}" ]; then
+    eval "${PACKAGENT_ORIGINAL_PROMPT_COMMAND}"
   fi
   _packagent_refresh_prompt
 }

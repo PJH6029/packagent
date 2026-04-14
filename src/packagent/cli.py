@@ -7,7 +7,7 @@ import shlex
 import sys
 from typing import Sequence
 
-from packagent.app import PackagentManager
+from packagent.app import BASE_MODE_FRESH, BASE_MODE_IMPORT, BASE_MODES, PackagentManager
 from packagent.errors import UserFacingError
 from packagent.models import ActivationResult, DoctorReport, StatusReport
 from packagent.shell import (
@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init", help="install shell startup integration")
     init_parser.add_argument("--shell", choices=SUPPORTED_SHELLS)
     init_parser.add_argument("--rc-file")
+    init_parser.add_argument("--base-mode", choices=BASE_MODES)
 
     create_parser = subparsers.add_parser("create", help="create an environment")
     create_parser.add_argument("-n", "--name", required=True)
@@ -69,7 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(render_shell_init(args.shell, initial_result))
             return 0
         if args.command == "init":
-            return _handle_init(manager, args.shell, args.rc_file)
+            return _handle_init(manager, args.shell, args.rc_file, args.base_mode)
         if args.command == "create":
             metadata = manager.create_env(args.name, clone_from=args.clone)
             print(f"created\t{metadata.name}\t{manager.paths.env_dir(metadata.name)}")
@@ -120,19 +121,48 @@ def _handle_deactivate(manager: PackagentManager) -> int:
     return 0
 
 
-def _handle_init(manager: PackagentManager, requested_shell: str | None, rc_file: str | None) -> int:
+def _handle_init(
+    manager: PackagentManager,
+    requested_shell: str | None,
+    rc_file: str | None,
+    requested_base_mode: str | None,
+) -> int:
     shell_name = requested_shell or detect_shell()
-    status = manager.status()
+    base_mode = _resolve_base_mode(manager, requested_base_mode)
+    activation = manager.initialize_base(base_mode)
     target = Path(rc_file).expanduser() if rc_file else default_rc_path(shell_name, manager.paths.home)
     result = install_shell_init(shell_name, target)
     print(
         f"initialized\t{result.shell_name}\t{result.rc_path}\t"
         f"{'updated' if result.changed else 'unchanged'}",
     )
-    print(f"active_env\t{status.active_env}")
+    print(f"base_mode\t{base_mode}")
+    print(f"active_env\t{activation.env_name}")
     print(f"run_now\teval \"$(packagent shell init {shell_name})\"")
     print(f"reload\tsource {shlex.quote(result.rc_path)}")
     return 0
+
+
+def _resolve_base_mode(manager: PackagentManager, requested_base_mode: str | None) -> str:
+    if requested_base_mode:
+        return requested_base_mode
+    if not sys.stdin.isatty() or not manager.base_init_prompt_needed():
+        return BASE_MODE_IMPORT
+    print(
+        "packagent found existing unmanaged Codex, agents, or Claude homes.",
+        file=sys.stderr,
+    )
+    print("Choose how to create the base environment:", file=sys.stderr)
+    print("  import: back up existing homes and import them into base", file=sys.stderr)
+    print("  fresh:  back up existing homes and start base empty", file=sys.stderr)
+    while True:
+        print("Base mode [import/fresh, default import]: ", end="", file=sys.stderr)
+        answer = input().strip().lower()
+        if answer in {"", "i", "import", "y", "yes"}:
+            return BASE_MODE_IMPORT
+        if answer in {"f", "fresh", "n", "no", "new"}:
+            return BASE_MODE_FRESH
+        print("Please enter 'import' or 'fresh'.", file=sys.stderr)
 
 
 def _shell_hook_active() -> bool:

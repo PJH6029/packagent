@@ -8,7 +8,9 @@
   currently `codex-home` (`CODEX_HOME` when it is already set, otherwise
   `~/.codex`, plus `envs/<name>/.codex`) and `agents-home` (`~/.agents`, plus
   `envs/<name>/.agents`) and `claude-home` (`CLAUDE_CONFIG_DIR` when it is
-  already set, otherwise `~/.claude`, plus `envs/<name>/.claude`)
+  already set, otherwise `~/.claude`, plus `envs/<name>/.claude`). It also
+  records auth files that are safe to seed into newly created envs:
+  `.codex/auth.json` and `.claude/.credentials.json`.
 - `GlobalSymlinkBackend`: activation backend that points each managed target
   path at the same active managed environment
 - `PackagentManager`: state loading, takeover, create/clone/remove, activation,
@@ -33,10 +35,10 @@ compatibility.
 
 ## First-run takeover
 
-When activation happens for the first time, `packagent` inspects every managed
-target path: the Codex home path (`CODEX_HOME` when set, otherwise `~/.codex`)
-and `~/.agents`, plus the Claude home path (`CLAUDE_CONFIG_DIR` when set,
-otherwise `~/.claude`):
+When `packagent init` or first activation manages homes for the first time,
+`packagent` inspects every managed target path: the Codex home path
+(`CODEX_HOME` when set, otherwise `~/.codex`) and `~/.agents`, plus the Claude
+home path (`CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude`):
 
 - missing path: create a managed symlink
 - unmanaged directory: move it into `backups/<timestamp>/`, import it into
@@ -48,6 +50,19 @@ otherwise `~/.claude`):
 Activation preflights all targets before writing symlinks, then repoints all
 managed target paths to the selected environment. The deactivated state is
 always `base`.
+
+`packagent init --base-mode fresh` uses the same backup safety path, but does
+not import the backed-up files into `base`. Interactive `init` prompts for the
+base mode when unmanaged homes exist; non-interactive `init` defaults to
+`import` for compatibility.
+
+## Environment creation
+
+`packagent create -n <env>` creates empty target directories, then copies only
+host-declared auth seed files from the active env into the new env. Full
+history, logs, caches, sessions, settings, skills, and plugins remain
+env-specific. `packagent create -n <env> --clone <source-env>` keeps the older
+full-copy behavior.
 
 ## Shell model
 

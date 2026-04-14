@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 import os
+import sys
 
 import pytest
 
@@ -109,6 +111,19 @@ def test_first_activation_imports_existing_home_into_base_and_replaces_link(mana
     assert backups
 
 
+def test_first_activation_preserves_symlinks_when_importing_home(manager: PackagentManager) -> None:
+    legacy_home = manager.host.managed_home_path(manager.paths)
+    legacy_home.joinpath("tmp").mkdir(parents=True)
+    legacy_home.joinpath("tmp", "dangling").symlink_to(legacy_home / "missing-tool")
+
+    manager.create_env("work")
+    manager.activate_env("work")
+
+    imported_link = manager.host.env_home_path(manager.paths, "base") / "tmp" / "dangling"
+    assert imported_link.is_symlink()
+    assert os.readlink(imported_link) == str(legacy_home / "missing-tool")
+
+
 @pytest.mark.parametrize(
     ("target_key", "legacy_parts", "content"),
     [
@@ -195,6 +210,62 @@ def test_deactivate_restores_base(manager: PackagentManager) -> None:
     assert manager.host.managed_home_path(manager.paths).resolve() == base_home
 
 
+def test_create_seeds_only_shared_auth_files_from_base(manager: PackagentManager) -> None:
+    claude_target = manager.host.target_by_key("claude-home")
+    manager.status()
+    base_codex = manager.host.env_home_path(manager.paths, "base")
+    base_claude = manager.host.env_target_path(manager.paths, "base", claude_target)
+    base_codex.joinpath("auth.json").write_text('{"token":"codex"}', encoding="utf-8")
+    base_codex.joinpath("history.jsonl").write_text("history\n", encoding="utf-8")
+    base_codex.joinpath("config.toml").write_text("model = 'demo'\n", encoding="utf-8")
+    base_codex.joinpath("log").mkdir()
+    base_codex.joinpath("log", "codex-tui.log").write_text("log\n", encoding="utf-8")
+    base_codex.joinpath("sessions").mkdir()
+    base_codex.joinpath("sessions", "session.jsonl").write_text("session\n", encoding="utf-8")
+    base_claude.joinpath(".credentials.json").write_text('{"token":"claude"}', encoding="utf-8")
+    base_claude.joinpath("settings.json").write_text('{"theme":"demo"}', encoding="utf-8")
+
+    manager.create_env("work")
+
+    work_codex = manager.host.env_home_path(manager.paths, "work")
+    work_claude = manager.host.env_target_path(manager.paths, "work", claude_target)
+    assert work_codex.joinpath("auth.json").read_text(encoding="utf-8") == '{"token":"codex"}'
+    assert work_claude.joinpath(".credentials.json").read_text(encoding="utf-8") == '{"token":"claude"}'
+    assert not work_codex.joinpath("history.jsonl").exists()
+    assert not work_codex.joinpath("config.toml").exists()
+    assert not work_codex.joinpath("log").exists()
+    assert not work_codex.joinpath("sessions").exists()
+    assert not work_claude.joinpath("settings.json").exists()
+
+
+def test_create_seeds_shared_auth_files_from_active_env(manager: PackagentManager) -> None:
+    claude_target = manager.host.target_by_key("claude-home")
+    manager.create_env("env-a")
+    manager.activate_env("env-a")
+    manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").write_text("base", encoding="utf-8")
+    env_a_codex = manager.host.env_home_path(manager.paths, "env-a")
+    env_a_claude = manager.host.env_target_path(manager.paths, "env-a", claude_target)
+    env_a_codex.joinpath("auth.json").write_text("env-a", encoding="utf-8")
+    env_a_claude.joinpath(".credentials.json").write_text("env-a-claude", encoding="utf-8")
+
+    manager.create_env("env-b")
+
+    assert manager.host.env_home_path(manager.paths, "env-b").joinpath("auth.json").read_text(encoding="utf-8") == "env-a"
+    assert manager.host.env_target_path(manager.paths, "env-b", claude_target).joinpath(".credentials.json").read_text(encoding="utf-8") == "env-a-claude"
+
+
+def test_create_skips_shared_auth_symlinks(manager: PackagentManager) -> None:
+    manager.status()
+    base_home = manager.host.env_home_path(manager.paths, "base")
+    secret = manager.paths.home / "outside-auth.json"
+    secret.write_text("secret", encoding="utf-8")
+    base_home.joinpath("auth.json").symlink_to(secret)
+
+    manager.create_env("work")
+
+    assert not manager.host.env_home_path(manager.paths, "work").joinpath("auth.json").exists()
+
+
 def test_activation_uses_existing_codex_home_path(manager: PackagentManager, monkeypatch: pytest.MonkeyPatch) -> None:
     custom_home = manager.paths.home / ".config" / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(custom_home))
@@ -266,6 +337,71 @@ def test_create_clone_base_copies_all_target_contents(manager: PackagentManager)
     assert manager.host.env_home_path(manager.paths, "copy-base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
     assert manager.host.env_target_path(manager.paths, "copy-base", agents_target).joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "agents"
     assert manager.host.env_target_path(manager.paths, "copy-base", claude_target).joinpath("settings.json").read_text(encoding="utf-8") == "claude"
+
+
+def test_initialize_base_imports_existing_targets_and_activates_base(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    claude_target = manager.host.target_by_key("claude-home")
+    codex_home = manager.host.managed_home_path(manager.paths)
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    claude_home = manager.host.managed_target_path(manager.paths, claude_target)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex", encoding="utf-8")
+    agents_home.joinpath("skills").mkdir(parents=True)
+    agents_home.joinpath("skills", "demo.txt").write_text("agents", encoding="utf-8")
+    claude_home.mkdir()
+    claude_home.joinpath(".credentials.json").write_text("claude", encoding="utf-8")
+
+    result = manager.initialize_base("import")
+
+    assert result.env_name == "base"
+    assert codex_home.is_symlink()
+    assert agents_home.is_symlink()
+    assert claude_home.is_symlink()
+    assert codex_home.resolve() == manager.host.env_home_path(manager.paths, "base")
+    assert manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
+    assert manager.host.env_target_path(manager.paths, "base", agents_target).joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "agents"
+    assert manager.host.env_target_path(manager.paths, "base", claude_target).joinpath(".credentials.json").read_text(encoding="utf-8") == "claude"
+    assert manager.load_state().active_env == "base"
+
+
+def test_initialize_base_fresh_backs_up_existing_targets_without_importing(
+    manager: PackagentManager,
+) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    claude_target = manager.host.target_by_key("claude-home")
+    codex_home = manager.host.managed_home_path(manager.paths)
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    claude_home = manager.host.managed_target_path(manager.paths, claude_target)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex", encoding="utf-8")
+    codex_home.joinpath("history.jsonl").write_text("history", encoding="utf-8")
+    agents_home.joinpath("skills").mkdir(parents=True)
+    agents_home.joinpath("skills", "demo.txt").write_text("agents", encoding="utf-8")
+    claude_home.mkdir()
+    claude_home.joinpath(".credentials.json").write_text("claude", encoding="utf-8")
+    claude_home.joinpath("settings.json").write_text("settings", encoding="utf-8")
+
+    result = manager.initialize_base("fresh")
+
+    base_codex = manager.host.env_home_path(manager.paths, "base")
+    base_agents = manager.host.env_target_path(manager.paths, "base", agents_target)
+    base_claude = manager.host.env_target_path(manager.paths, "base", claude_target)
+    assert result.env_name == "base"
+    assert codex_home.is_symlink()
+    assert agents_home.is_symlink()
+    assert claude_home.is_symlink()
+    assert codex_home.resolve() == base_codex
+    assert not base_codex.joinpath("auth.json").exists()
+    assert not base_codex.joinpath("history.jsonl").exists()
+    assert not base_agents.joinpath("skills", "demo.txt").exists()
+    assert not base_claude.joinpath(".credentials.json").exists()
+    assert not base_claude.joinpath("settings.json").exists()
+    backups = list(manager.paths.backups_root.iterdir())
+    assert backups
+    assert any(path.name == "auth.json" for path in manager.paths.backups_root.rglob("*"))
+    assert any(path.name == ".credentials.json" for path in manager.paths.backups_root.rglob("*"))
+    assert {record.reason for record in manager.load_state().backups} == {"fresh_base_directory"}
 
 
 def test_doctor_detects_and_repairs_symlink_drift(manager: PackagentManager) -> None:
@@ -451,6 +587,8 @@ def test_cli_init_writes_detected_shell_rc_file(
     assert rc_path.exists()
     assert 'eval "$(packagent shell init bash)"' in rc_path.read_text(encoding="utf-8")
     assert f"initialized\tbash\t{rc_path}\tupdated" in output
+    assert "base_mode\timport" in output
+    assert "active_env\tbase" in output
     assert 'run_now\teval "$(packagent shell init bash)"' in output
 
 
@@ -466,6 +604,63 @@ def test_cli_init_can_target_explicit_rc_file(
     assert exit_code == 0
     assert 'eval "$(packagent shell init zsh)"' in rc_path.read_text(encoding="utf-8")
     assert f"initialized\tzsh\t{rc_path}\tupdated" in output
+
+
+def test_cli_init_base_mode_fresh_creates_bare_base(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex", encoding="utf-8")
+
+    exit_code = main(["init", "--shell", "bash", "--base-mode", "fresh"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "base_mode\tfresh" in output
+    assert codex_home.is_symlink()
+    assert not manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").exists()
+    assert any(path.name == "auth.json" for path in manager.paths.backups_root.rglob("*"))
+
+
+def test_cli_init_interactive_prompt_can_choose_fresh(
+    manager: PackagentManager,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", TtyInput("fresh\n"))
+
+    exit_code = main(["init", "--shell", "bash"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "base_mode\tfresh" in captured.out
+    assert "Base mode" in captured.err
+    assert not manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").exists()
+
+
+def test_cli_init_noninteractive_defaults_to_import(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex", encoding="utf-8")
+
+    exit_code = main(["init", "--shell", "bash"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "base_mode\timport" in output
+    assert manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
 
 
 def test_cli_deactivate_emits_base_activation_commands(

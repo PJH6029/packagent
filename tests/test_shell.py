@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shlex
+import subprocess
 from pathlib import Path
 
 from packagent.models import ActivationResult
@@ -17,7 +19,43 @@ def test_bash_shell_init_contains_wrapper_and_prompt_hook() -> None:
     script = render_shell_init("bash")
     assert 'packagent() {' in script
     assert 'PROMPT_COMMAND="_packagent_prompt_command"' in script
+    assert "PACKAGENT_ORIGINAL_PROMPT_COMMAND" in script
     assert 'PACKAGENT_SHELL=bash' in script
+
+
+def test_bash_shell_init_is_safe_to_source_repeatedly(tmp_path: Path) -> None:
+    prompt_output = tmp_path / "prompt-output.txt"
+    script_path = tmp_path / "double-source.bash"
+    hook = render_shell_init("bash")
+    script_path.write_text(
+        f"""
+set -euo pipefail
+export PACKAGENT_TEST_PROMPT_OUTPUT={shlex.quote(str(prompt_output))}
+PS1='prompt$ '
+PROMPT_COMMAND='printf original >> "$PACKAGENT_TEST_PROMPT_OUTPUT"'
+{hook}
+{hook}
+[ "${{PROMPT_COMMAND-}}" = "_packagent_prompt_command" ]
+[ "${{PACKAGENT_ORIGINAL_PROMPT_COMMAND-}}" = 'printf original >> "$PACKAGENT_TEST_PROMPT_OUTPUT"' ]
+PACKAGENT_ACTIVE_ENV=base
+_packagent_prompt_command
+case "$PS1" in
+  "(base) "*) ;;
+  *) echo "prompt was not refreshed: $PS1" >&2; exit 1 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert prompt_output.read_text(encoding="utf-8") == "original"
 
 
 def test_zsh_shell_init_contains_wrapper_and_precmd_hook() -> None:

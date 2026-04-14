@@ -32,6 +32,11 @@ packagent init
 source ~/.zshrc  # use ~/.bashrc on bash
 ```
 
+When unmanaged `~/.codex`, `~/.agents`, or `~/.claude` paths already exist,
+interactive `init` asks whether `base` should import them or start fresh. Use
+`packagent init --base-mode import` or `packagent init --base-mode fresh` in
+scripts.
+
 (Example) Create an environment for Codex plus OMX:
 
 ```bash
@@ -100,13 +105,25 @@ If `CODEX_HOME` is already set, `packagent` manages that Codex path instead of
 instead of `~/.claude`. `packagent` does not export or rewrite those variables
 for you.
 
-On first takeover, existing unmanaged target directories are imported into the
-permanent `base` env. `base` is the fallback environment and cannot be removed.
+On first takeover, existing unmanaged target paths are backed up. By default
+they are imported into the permanent `base` env; with `--base-mode fresh`,
+`base` starts empty after the backup. `base` is the fallback environment and
+cannot be removed.
+
+Normal `packagent create -n <env>` starts with separate history, logs, settings,
+skills, caches, and sessions, but seeds cumbersome auth files from the active
+env when present:
+
+- Codex: `auth.json`
+- Claude: `.credentials.json`
+
+Use `packagent create -n <env> --clone <source-env>` when you want a full copy
+instead.
 
 ## Commands
 
 ```bash
-packagent init [--shell {bash|zsh}] [--rc-file PATH]
+packagent init [--shell {bash|zsh}] [--rc-file PATH] [--base-mode {import|fresh}]
 packagent shell init {bash|zsh}
 packagent create -n <env>
 packagent create -n <env> --clone <source-env>
@@ -126,6 +143,7 @@ packagent doctor --fix
 - manages a single global active agent environment
 - switches `~/.codex`, `~/.agents`, and `~/.claude` together
 - respects pre-set `CODEX_HOME` and `CLAUDE_CONFIG_DIR` paths
+- seeds only auth files into newly created envs; history and logs stay separate
 - keeps `base` as a permanent fallback environment
 - backs up existing unmanaged target paths on first takeover
 - is designed for macOS and Linux
@@ -199,9 +217,9 @@ PACKAGENT_DOCKER_CLAUDE_SOURCE=/path/to/claude-home \
 ```
 
 The scripted smoke flow exercises local installation, shell integration,
-first-run takeover, env creation and activation, isolation across `.codex`,
-`.agents`, and `.claude`, `doctor --fix`, deactivation, env removal, and
-uninstall.
+first-run takeover, auth-only seed copying, env creation and activation,
+fresh-base backup behavior, isolation across `.codex`, `.agents`, and
+`.claude`, `doctor --fix`, deactivation, env removal, and uninstall.
 
 Inside the container, the repo is available at `/workspace`:
 

@@ -14,6 +14,7 @@ class ManagedTarget:
     home_dir_name: str
     home_env_var: str | None = None
     primary: bool = False
+    shared_seed_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -68,12 +69,14 @@ class CodexHost(HostAdapter):
                     home_dir_name=".codex",
                     home_env_var="CODEX_HOME",
                     primary=True,
+                    shared_seed_files=("auth.json",),
                 ),
                 ManagedTarget(key="agents-home", home_dir_name=".agents"),
                 ManagedTarget(
                     key="claude-home",
                     home_dir_name=".claude",
                     home_env_var="CLAUDE_CONFIG_DIR",
+                    shared_seed_files=(".credentials.json",),
                 ),
             ),
         )

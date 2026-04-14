@@ -57,6 +57,14 @@ main() {
   cat > "$HOME/.codex/packagent-e2e-codex-seed.txt" <<'EOF'
 packagent e2e codex seed
 EOF
+  cat > "$HOME/.codex/auth.json" <<'EOF'
+{"codex_auth": "shared"}
+EOF
+  cat > "$HOME/.codex/history.jsonl" <<'EOF'
+{"history": "base-only"}
+EOF
+  mkdir -p "$HOME/.codex/tmp"
+  ln -s "$HOME/.codex/missing-tool" "$HOME/.codex/tmp/dangling-tool"
   mkdir -p "$HOME/.agents/skills/legacy-skill"
   cat > "$HOME/.agents/skills/legacy-skill/SKILL.md" <<'EOF'
 Legacy skill content
@@ -64,6 +72,12 @@ EOF
   mkdir -p "$HOME/.claude"
   cat > "$HOME/.claude/packagent-e2e-claude-seed.json" <<'EOF'
 {"packagent_e2e_claude_seed": true}
+EOF
+  cat > "$HOME/.claude/.credentials.json" <<'EOF'
+{"claude_auth": "shared"}
+EOF
+  cat > "$HOME/.claude/settings.json" <<'EOF'
+{"history": "base-only"}
 EOF
 
   echo "== install packagent via uv tool =="
@@ -76,6 +90,13 @@ EOF
   packagent init --shell bash >/tmp/packagent-init.txt
   grep -q $'initialized\tbash\t' /tmp/packagent-init.txt || fail "packagent init did not report bash setup"
   grep -q 'eval "$(packagent shell init bash)"' "$HOME/.bashrc" || fail "bashrc was not updated by packagent init"
+  echo "== verify bash rc can be sourced repeatedly =="
+  bash --rcfile "$HOME/.bashrc" -i -c \
+    'source "$HOME/.bashrc"; source "$HOME/.bashrc"; _packagent_prompt_command; [ "${PACKAGENT_ACTIVE_ENV:-}" = "base" ]' \
+    >/tmp/packagent-bashrc-resource.txt 2>&1 || {
+    cat /tmp/packagent-bashrc-resource.txt >&2
+    fail "bashrc repeated source failed"
+  }
   # Bootstrap the current non-interactive test shell after verifying rc-file installation.
   eval "$(packagent shell init bash)"
   [ "${PACKAGENT_ACTIVE_ENV:-}" = "base" ] || fail "base env was not active after shell init"
@@ -99,11 +120,22 @@ EOF
   assert_symlink_target "$HOME/.agents" "$demo_agents"
   assert_symlink_target "$HOME/.claude" "$demo_claude"
   assert_path_exists "$base_home/packagent-e2e-codex-seed.txt"
+  assert_path_exists "$base_home/auth.json"
+  [ -L "$base_home/tmp/dangling-tool" ] || fail "base env did not preserve Codex symlink"
   assert_path_exists "$base_agents/skills/legacy-skill/SKILL.md"
   assert_path_exists "$base_claude/packagent-e2e-claude-seed.json"
+  assert_path_exists "$base_claude/.credentials.json"
   grep -q "packagent e2e codex seed" "$base_home/packagent-e2e-codex-seed.txt" || fail "base env did not import legacy home"
+  grep -q '"codex_auth": "shared"' "$base_home/auth.json" || fail "base env did not import Codex auth"
   grep -q "Legacy skill content" "$base_agents/skills/legacy-skill/SKILL.md" || fail "base env did not import legacy agents home"
   grep -q '"packagent_e2e_claude_seed": true' "$base_claude/packagent-e2e-claude-seed.json" || fail "base env did not import legacy Claude home"
+  grep -q '"claude_auth": "shared"' "$base_claude/.credentials.json" || fail "base env did not import Claude auth"
+  assert_path_exists "$demo_home/auth.json"
+  assert_path_exists "$demo_claude/.credentials.json"
+  assert_path_missing "$demo_home/history.jsonl"
+  assert_path_missing "$demo_claude/settings.json"
+  grep -q '"codex_auth": "shared"' "$demo_home/auth.json" || fail "new env did not seed Codex auth"
+  grep -q '"claude_auth": "shared"' "$demo_claude/.credentials.json" || fail "new env did not seed Claude auth"
 
   echo "== verify npm global installs work for the sandbox user =="
   [ "$(npm config get prefix)" = "$HOME/.local" ] || fail "npm global prefix is not user-local"
@@ -151,6 +183,8 @@ EOF
   assert_path_missing "$HOME/.codex/skills/demo-skill/SKILL.md"
   assert_path_missing "$HOME/.agents/skills/user-skill/SKILL.md"
   assert_path_missing "$HOME/.claude/settings.json"
+  assert_path_exists "$HOME/.codex/auth.json"
+  assert_path_exists "$HOME/.claude/.credentials.json"
 
   echo "== force doctor repair path =="
   rm -f "$HOME/.codex"
@@ -175,6 +209,29 @@ EOF
   grep -q "packagent e2e codex seed" "$HOME/.codex/packagent-e2e-codex-seed.txt" || fail "base env was not restored on deactivate"
   grep -q "Legacy skill content" "$HOME/.agents/skills/legacy-skill/SKILL.md" || fail "base agents env was not restored on deactivate"
   grep -q '"packagent_e2e_claude_seed": true' "$HOME/.claude/packagent-e2e-claude-seed.json" || fail "base Claude env was not restored on deactivate"
+
+  echo "== verify fresh base mode backs up without import =="
+  local fresh_home
+  fresh_home="$(mktemp -d)"
+  mkdir -p "$fresh_home/.codex" "$fresh_home/.claude"
+  cat > "$fresh_home/.codex/auth.json" <<'EOF'
+{"codex_auth": "fresh-backup-only"}
+EOF
+  cat > "$fresh_home/.codex/history.jsonl" <<'EOF'
+{"history": "fresh-backup-only"}
+EOF
+  cat > "$fresh_home/.claude/.credentials.json" <<'EOF'
+{"claude_auth": "fresh-backup-only"}
+EOF
+  HOME="$fresh_home" packagent init --shell bash --base-mode fresh --rc-file "$fresh_home/.bashrc" >/tmp/packagent-fresh-init.txt
+  grep -q $'base_mode\tfresh' /tmp/packagent-fresh-init.txt || fail "packagent init did not report fresh base mode"
+  assert_symlink_target "$fresh_home/.codex" "$fresh_home/.packagent/envs/base/.codex"
+  assert_symlink_target "$fresh_home/.claude" "$fresh_home/.packagent/envs/base/.claude"
+  assert_path_missing "$fresh_home/.packagent/envs/base/.codex/auth.json"
+  assert_path_missing "$fresh_home/.packagent/envs/base/.codex/history.jsonl"
+  assert_path_missing "$fresh_home/.packagent/envs/base/.claude/.credentials.json"
+  find "$fresh_home/.packagent/backups" -name auth.json -print -quit | grep -q . || fail "fresh mode did not back up Codex auth"
+  find "$fresh_home/.packagent/backups" -name .credentials.json -print -quit | grep -q . || fail "fresh mode did not back up Claude auth"
 
   echo "== remove non-active env and uninstall packagent =="
   packagent remove codex-with-demo

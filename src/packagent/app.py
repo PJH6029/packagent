@@ -34,6 +34,16 @@ from packagent.util import copy_directory, remove_path, timestamp_slug, utc_now_
 from packagent.validation import validate_env_name
 
 
+BASE_MODE_FRESH = "fresh"
+BASE_MODE_IMPORT = "import"
+BASE_MODES = (BASE_MODE_IMPORT, BASE_MODE_FRESH)
+UNMANAGED_HOME_KINDS = {
+    HOME_KIND_UNMANAGED_DIRECTORY,
+    HOME_KIND_UNMANAGED_FILE,
+    HOME_KIND_UNMANAGED_SYMLINK,
+}
+
+
 class PackagentManager:
     def __init__(
         self,
@@ -66,6 +76,7 @@ class PackagentManager:
                 )
             else:
                 self._ensure_env_targets(name, wipe=True)
+                self._seed_shared_files_from_active_env(state, name)
                 metadata = EnvMetadata(
                     name=name,
                     host=self.host.name,
@@ -130,6 +141,36 @@ class PackagentManager:
     def status(self) -> StatusReport:
         state = self._ensure_state()
         return self._build_status_report(state)
+
+    def base_init_prompt_needed(self) -> bool:
+        with mutation_lock(self.paths):
+            self._ensure_state()
+            return any(
+                inspection.kind in UNMANAGED_HOME_KINDS
+                for inspection in self._inspect_targets().values()
+            )
+
+    def initialize_base(self, base_mode: str = BASE_MODE_IMPORT) -> ActivationResult:
+        if base_mode not in BASE_MODES:
+            raise UserFacingError(f"unsupported base mode '{base_mode}'")
+        with mutation_lock(self.paths):
+            state = self._ensure_state()
+            if base_mode == BASE_MODE_IMPORT:
+                self._ensure_managed_targets(state)
+            else:
+                self._backup_unmanaged_targets_without_import(state)
+            target_homes = self._activate_targets(state.base_env)
+            primary_target = self.host.primary_target()
+            primary_home = target_homes[primary_target.key]
+            state.active_env = state.base_env
+            self._record_target_links(state, target_homes)
+            self._save_state(state)
+            return ActivationResult(
+                env_name=state.base_env,
+                managed_home_path=str(self.host.managed_home_path(self.paths)),
+                codex_home=primary_home,
+                target_homes=target_homes,
+            )
 
     def remove_env(self, name: str) -> None:
         env_name = validate_env_name(name, allow_base=True)
@@ -274,6 +315,19 @@ class PackagentManager:
         if metadata_path.exists():
             metadata_path.unlink()
 
+    def _seed_shared_files_from_active_env(self, state: PackagentState, target_name: str) -> None:
+        source_name = state.active_env if state.active_env in state.envs else state.base_env
+        for target in self.host.targets:
+            source_target = self.host.env_target_path(self.paths, source_name, target)
+            target_target = self.host.env_target_path(self.paths, target_name, target)
+            for relative_name in target.shared_seed_files:
+                source_file = source_target / relative_name
+                if source_file.is_symlink() or not source_file.is_file():
+                    continue
+                target_file = target_target / relative_name
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_file, target_file)
+
     def _inspect_targets(self) -> Dict[str, HomeInspection]:
         return {
             target.key: self.backend.inspect(self.paths, self.host, target)
@@ -314,18 +368,23 @@ class PackagentManager:
         for target in self.host.targets:
             self._ensure_managed_target(state, target, inspections[target.key])
 
-    def _preflight_managed_targets(self, inspections: Dict[str, HomeInspection]) -> None:
+    def _preflight_managed_targets(
+        self,
+        inspections: Dict[str, HomeInspection],
+        *,
+        action: str = "import",
+    ) -> None:
         for target in self.host.targets:
             inspection = inspections[target.key]
             if inspection.kind != HOME_KIND_UNMANAGED_SYMLINK:
                 continue
             home_path = self.host.managed_target_path(self.paths, target)
             if not inspection.resolved_target:
-                raise UserFacingError(f"cannot import broken unmanaged symlink at {home_path}")
+                raise UserFacingError(f"cannot {action} broken unmanaged symlink at {home_path}")
             resolved_target = Path(inspection.resolved_target)
             if not resolved_target.exists() or not resolved_target.is_dir():
                 raise UserFacingError(
-                    f"cannot import unmanaged symlink at {home_path}; resolved target is not a directory",
+                    f"cannot {action} unmanaged symlink at {home_path}; resolved target is not a directory",
                 )
 
     def _ensure_managed_target(
@@ -351,6 +410,38 @@ class PackagentManager:
             return
         if inspection.kind == HOME_KIND_UNMANAGED_FILE:
             self._backup_file_target(state, target)
+            return
+        raise UserFacingError(f"cannot handle home state '{inspection.kind}'")
+
+    def _backup_unmanaged_targets_without_import(self, state: PackagentState) -> None:
+        inspections = self._inspect_targets()
+        self._preflight_managed_targets(inspections, action="back up")
+        for target in self.host.targets:
+            self._backup_unmanaged_target_without_import(state, target, inspections[target.key])
+
+    def _backup_unmanaged_target_without_import(
+        self,
+        state: PackagentState,
+        target: ManagedTarget,
+        inspection: HomeInspection,
+    ) -> None:
+        if inspection.kind == HOME_KIND_MISSING:
+            return
+        if inspection.kind == HOME_KIND_MANAGED:
+            self._reconcile_managed_state(state, inspection.managed_env)
+            return
+        if inspection.kind == HOME_KIND_BROKEN_MANAGED:
+            if inspection.managed_env:
+                self._reconcile_managed_state(state, inspection.managed_env)
+            return
+        if inspection.kind == HOME_KIND_UNMANAGED_DIRECTORY:
+            self._backup_directory_target_without_import(state, target)
+            return
+        if inspection.kind == HOME_KIND_UNMANAGED_SYMLINK:
+            self._backup_symlink_target_without_import(state, target, inspection)
+            return
+        if inspection.kind == HOME_KIND_UNMANAGED_FILE:
+            self._backup_file_target_without_import(state, target)
             return
         raise UserFacingError(f"cannot handle home state '{inspection.kind}'")
 
@@ -400,6 +491,24 @@ class PackagentManager:
         )
         self._mark_base_imported(state, str(backup_root))
 
+    def _backup_directory_target_without_import(
+        self,
+        state: PackagentState,
+        target: ManagedTarget,
+    ) -> None:
+        home_path = self.host.managed_target_path(self.paths, target)
+        backup_root = self._allocate_backup_dir()
+        backup_home = backup_root / target.home_dir_name
+        shutil.move(str(home_path), str(backup_home))
+        state.backups.append(
+            BackupRecord(
+                created_at=utc_now_iso(),
+                reason="fresh_base_directory",
+                backup_path=str(backup_root),
+                original_home=str(home_path),
+            ),
+        )
+
     def _import_symlink_target(
         self,
         state: PackagentState,
@@ -439,6 +548,43 @@ class PackagentManager:
         )
         self._mark_base_imported(state, str(backup_root))
 
+    def _backup_symlink_target_without_import(
+        self,
+        state: PackagentState,
+        target: ManagedTarget,
+        inspection: HomeInspection,
+    ) -> None:
+        home_path = self.host.managed_target_path(self.paths, target)
+        if not inspection.resolved_target:
+            raise UserFacingError(f"cannot back up broken unmanaged symlink at {home_path}")
+        resolved_target = Path(inspection.resolved_target)
+        if not resolved_target.exists() or not resolved_target.is_dir():
+            raise UserFacingError(
+                f"cannot back up unmanaged symlink at {home_path}; resolved target is not a directory",
+            )
+        backup_root = self._allocate_backup_dir()
+        snapshot_dir = backup_root / "resolved-home"
+        copy_directory(resolved_target, snapshot_dir)
+        write_json(
+            backup_root / "symlink.json",
+            {
+                "created_at": utc_now_iso(),
+                "original_home": str(home_path),
+                "raw_target": inspection.raw_target,
+                "resolved_target": inspection.resolved_target,
+            },
+        )
+        home_path.unlink()
+        state.backups.append(
+            BackupRecord(
+                created_at=utc_now_iso(),
+                reason="fresh_base_symlink",
+                backup_path=str(backup_root),
+                original_home=str(home_path),
+                original_target=inspection.raw_target,
+            ),
+        )
+
     def _backup_file_target(self, state: PackagentState, target: ManagedTarget) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
         backup_root = self._allocate_backup_dir()
@@ -447,6 +593,19 @@ class PackagentManager:
             BackupRecord(
                 created_at=utc_now_iso(),
                 reason="takeover_file",
+                backup_path=str(backup_root),
+                original_home=str(home_path),
+            ),
+        )
+
+    def _backup_file_target_without_import(self, state: PackagentState, target: ManagedTarget) -> None:
+        home_path = self.host.managed_target_path(self.paths, target)
+        backup_root = self._allocate_backup_dir()
+        shutil.move(str(home_path), str(backup_root / "unexpected-home-file"))
+        state.backups.append(
+            BackupRecord(
+                created_at=utc_now_iso(),
+                reason="fresh_base_file",
                 backup_path=str(backup_root),
                 original_home=str(home_path),
             ),

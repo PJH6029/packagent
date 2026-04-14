@@ -24,7 +24,7 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def copy_directory(src: Path, dst: Path) -> None:
-    shutil.copytree(str(src), str(dst))
+    shutil.copytree(str(src), str(dst), symlinks=True)
 
 
 def remove_path(path: Path) -> None:
@@ -32,4 +32,3 @@ def remove_path(path: Path) -> None:
         path.unlink()
     elif path.exists():
         shutil.rmtree(path)
-
