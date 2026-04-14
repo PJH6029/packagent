@@ -37,20 +37,33 @@ main() {
   claude --version || true
 
   echo "== clean previous state =="
-  rm -rf "$HOME/.packagent" "$HOME/.packagent-v1" "$HOME/.codex" "$HOME/.agents" "$HOME/.claude"
+  rm -rf "$HOME/.packagent" "$HOME/.packagent-v1"
+  for target in "$HOME/.codex" "$HOME/.agents" "$HOME/.claude"; do
+    if [ -L "$target" ]; then
+      rm -f "$target"
+    fi
+  done
+
+  echo "== verify optional copied host config seeds =="
+  if [ -n "${PACKAGENT_DOCKER_EXPECT_CODEX_SEED_FILE:-}" ]; then
+    assert_path_exists "$HOME/.codex/$PACKAGENT_DOCKER_EXPECT_CODEX_SEED_FILE"
+  fi
+  if [ -n "${PACKAGENT_DOCKER_EXPECT_CLAUDE_SEED_FILE:-}" ]; then
+    assert_path_exists "$HOME/.claude/$PACKAGENT_DOCKER_EXPECT_CLAUDE_SEED_FILE"
+  fi
 
   echo "== seed unmanaged user-level targets =="
   mkdir -p "$HOME/.codex"
-  cat > "$HOME/.codex/AGENTS.md" <<'EOF'
-Legacy AGENTS content
+  cat > "$HOME/.codex/packagent-e2e-codex-seed.txt" <<'EOF'
+packagent e2e codex seed
 EOF
   mkdir -p "$HOME/.agents/skills/legacy-skill"
   cat > "$HOME/.agents/skills/legacy-skill/SKILL.md" <<'EOF'
 Legacy skill content
 EOF
   mkdir -p "$HOME/.claude"
-  cat > "$HOME/.claude/settings.json" <<'EOF'
-{"legacy": true}
+  cat > "$HOME/.claude/packagent-e2e-claude-seed.json" <<'EOF'
+{"packagent_e2e_claude_seed": true}
 EOF
 
   echo "== install packagent via uv tool =="
@@ -85,12 +98,12 @@ EOF
   assert_symlink_target "$HOME/.codex" "$demo_home"
   assert_symlink_target "$HOME/.agents" "$demo_agents"
   assert_symlink_target "$HOME/.claude" "$demo_claude"
-  assert_path_exists "$base_home/AGENTS.md"
+  assert_path_exists "$base_home/packagent-e2e-codex-seed.txt"
   assert_path_exists "$base_agents/skills/legacy-skill/SKILL.md"
-  assert_path_exists "$base_claude/settings.json"
-  grep -q "Legacy AGENTS content" "$base_home/AGENTS.md" || fail "base env did not import legacy home"
+  assert_path_exists "$base_claude/packagent-e2e-claude-seed.json"
+  grep -q "packagent e2e codex seed" "$base_home/packagent-e2e-codex-seed.txt" || fail "base env did not import legacy home"
   grep -q "Legacy skill content" "$base_agents/skills/legacy-skill/SKILL.md" || fail "base env did not import legacy agents home"
-  grep -q '"legacy": true' "$base_claude/settings.json" || fail "base env did not import legacy Claude home"
+  grep -q '"packagent_e2e_claude_seed": true' "$base_claude/packagent-e2e-claude-seed.json" || fail "base env did not import legacy Claude home"
 
   echo "== verify npm global installs work for the sandbox user =="
   [ "$(npm config get prefix)" = "$HOME/.local" ] || fail "npm global prefix is not user-local"
@@ -159,9 +172,9 @@ EOF
   assert_symlink_target "$HOME/.codex" "$base_home"
   assert_symlink_target "$HOME/.agents" "$base_agents"
   assert_symlink_target "$HOME/.claude" "$base_claude"
-  grep -q "Legacy AGENTS content" "$HOME/.codex/AGENTS.md" || fail "base env was not restored on deactivate"
+  grep -q "packagent e2e codex seed" "$HOME/.codex/packagent-e2e-codex-seed.txt" || fail "base env was not restored on deactivate"
   grep -q "Legacy skill content" "$HOME/.agents/skills/legacy-skill/SKILL.md" || fail "base agents env was not restored on deactivate"
-  grep -q '"legacy": true' "$HOME/.claude/settings.json" || fail "base Claude env was not restored on deactivate"
+  grep -q '"packagent_e2e_claude_seed": true' "$HOME/.claude/packagent-e2e-claude-seed.json" || fail "base Claude env was not restored on deactivate"
 
   echo "== remove non-active env and uninstall packagent =="
   packagent remove codex-with-demo
