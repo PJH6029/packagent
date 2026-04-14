@@ -17,7 +17,7 @@ class PackagentPaths:
     @classmethod
     def discover(cls, home: Optional[Path] = None) -> "PackagentPaths":
         user_home = Path(home).expanduser() if home else Path.home()
-        root = user_home / ".packagent-v1"
+        root = user_home / ".packagent"
         return cls(
             home=user_home,
             root=root,
@@ -32,4 +32,3 @@ class PackagentPaths:
 
     def env_metadata_file(self, name: str) -> Path:
         return self.env_dir(name) / ".packagent-env.json"
-

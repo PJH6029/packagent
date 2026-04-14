@@ -66,7 +66,7 @@ def test_shell_init_can_bootstrap_the_current_env() -> None:
     result = ActivationResult(
         env_name="base",
         managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/base/.codex",
+        codex_home="/tmp/home/.packagent/envs/base/.codex",
     )
     script = render_shell_init("bash", result)
 
@@ -78,13 +78,13 @@ def test_activate_and_deactivate_shell_commands_are_export_friendly() -> None:
     result = ActivationResult(
         env_name="work",
         managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/work/.codex",
+        codex_home="/tmp/home/.packagent/envs/work/.codex",
     )
     activate_script = render_activate_commands("zsh", result)
     deactivate_result = ActivationResult(
         env_name="base",
         managed_home_path="/tmp/home/.codex",
-        codex_home="/tmp/home/.packagent-v1/envs/base/.codex",
+        codex_home="/tmp/home/.packagent/envs/base/.codex",
     )
     deactivate_script = render_deactivate_commands("zsh", deactivate_result)
 

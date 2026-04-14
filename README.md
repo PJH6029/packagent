@@ -1,7 +1,7 @@
 # packagent
 
 `packagent` is a small Python CLI that isolates user-level Codex packaging
-targets under `~/.packagent-v1/envs/<env>/` and switches the active managed
+targets under `~/.packagent/envs/<env>/` and switches the active managed
 targets with symlinks. Each environment contains `.codex` and `.agents`, so
 Codex configuration and user-level agent skills or harness files stay separated
 by environment.
@@ -77,8 +77,8 @@ omx setup
 ```
 
 All writes to the managed Codex home path land inside the active environment's
-`~/.packagent-v1/envs/codex-with-omx/.codex`. Writes under `~/.agents` land
-inside `~/.packagent-v1/envs/codex-with-omx/.agents`. By default the managed
+`~/.packagent/envs/codex-with-omx/.codex`. Writes under `~/.agents` land
+inside `~/.packagent/envs/codex-with-omx/.agents`. By default the managed
 Codex home path is `~/.codex`, but if you already export `CODEX_HOME`,
 `packagent` will manage that Codex path instead.
 
@@ -182,7 +182,7 @@ Open an interactive shell for manual testing:
 ```
 
 Inside the container, the test user home is `/home/tester`, so all managed home
-path mutations and `~/.packagent-v1` mutations stay isolated inside the
+path mutations and `~/.packagent` mutations stay isolated inside the
 container.
 
 The repo itself is copied into the container at `/workspace`. Because

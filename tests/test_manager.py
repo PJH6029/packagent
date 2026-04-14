@@ -26,6 +26,13 @@ def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PackagentManager
     return PackagentManager(paths=PackagentPaths.discover())
 
 
+def test_paths_discover_uses_packagent_root(tmp_path: Path) -> None:
+    paths = PackagentPaths.discover(home=tmp_path)
+
+    assert paths.root == tmp_path / ".packagent"
+    assert paths.env_dir("work") == tmp_path / ".packagent" / "envs" / "work"
+
+
 def test_home_inspection_detects_missing_directory_and_managed_symlink(manager: PackagentManager) -> None:
     backend = GlobalSymlinkBackend()
     inspection = backend.inspect(manager.paths, CodexHost())
@@ -313,7 +320,7 @@ def test_schema_v1_state_migrates_to_managed_targets(manager: PackagentManager) 
         "active_env": "base",
         "managed_home_path": str(manager.paths.home / ".codex"),
         "managed_root": str(manager.paths.root),
-        "manager_name": "packagent-v1",
+        "manager_name": "packagent",
         "last_link_target": str(manager.paths.env_dir("base") / ".codex"),
         "envs": {},
         "backups": [],

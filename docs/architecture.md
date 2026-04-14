@@ -17,7 +17,7 @@
 
 ## State model
 
-State lives in `~/.packagent-v1/state.json` and records:
+State lives in `~/.packagent/state.json` and records:
 
 - active environment
 - known environments

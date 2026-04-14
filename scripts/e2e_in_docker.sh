@@ -36,7 +36,7 @@ main() {
   codex --version || true
 
   echo "== clean previous state =="
-  rm -rf "$HOME/.packagent-v1" "$HOME/.codex" "$HOME/.agents"
+  rm -rf "$HOME/.packagent" "$HOME/.packagent-v1" "$HOME/.codex" "$HOME/.agents"
 
   echo "== seed unmanaged Codex user-level targets =="
   mkdir -p "$HOME/.codex"
@@ -66,7 +66,7 @@ EOF
   packagent create -n codex-with-demo
   packagent activate codex-with-demo
 
-  local root="$HOME/.packagent-v1"
+  local root="$HOME/.packagent"
   local base_home="$root/envs/base/.codex"
   local base_agents="$root/envs/base/.agents"
   local demo_home="$root/envs/codex-with-demo/.codex"

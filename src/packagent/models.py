@@ -76,7 +76,7 @@ class PackagentState:
     active_env: str
     managed_home_path: str
     managed_root: str
-    manager_name: str = "packagent-v1"
+    manager_name: str = "packagent"
     last_link_target: Optional[str] = None
     envs: Dict[str, EnvMetadata] = field(default_factory=dict)
     backups: List[BackupRecord] = field(default_factory=list)
@@ -103,7 +103,7 @@ class PackagentState:
             active_env=str(data["active_env"]),
             managed_home_path=str(data["managed_home_path"]),
             managed_root=str(data["managed_root"]),
-            manager_name=str(data.get("manager_name", "packagent-v1")),
+            manager_name=str(data.get("manager_name", "packagent")),
             last_link_target=str(data["last_link_target"]) if data.get("last_link_target") else None,
             envs=envs,
             backups=backups,

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 This repository implements `packagent`, a small Python CLI for managing
-isolated Codex home environments under `~/.packagent-v1`.
+isolated Codex home environments under `~/.packagent`.
 
 These instructions apply to the entire repository.
 
@@ -28,8 +28,9 @@ These instructions apply to the entire repository.
   - `PackagentManager` for stateful workflows
   - `shell.py` for generated shell integration
 - Keep the on-disk contract stable unless the user explicitly asks to change it:
-  - `~/.packagent-v1/envs/<env>/.codex`
-  - `~/.packagent-v1/state.json`
+  - `~/.packagent/envs/<env>/.codex`
+  - `~/.packagent/envs/<env>/.agents`
+  - `~/.packagent/state.json`
   - `~/.codex` as the managed symlink target for the active env
 - When changing activation or takeover logic, preserve the safety model:
   - backup/import unmanaged homes before takeover
@@ -47,7 +48,7 @@ These instructions apply to the entire repository.
   - shell hook rendering
   - environment validation or state serialization
 - Filesystem tests must use a temporary `HOME`. Never write tests that touch the
-  real user `~/.codex` or `~/.packagent-v1`.
+  real user `~/.codex`, `~/.agents`, or `~/.packagent`.
 - For shell behavior, test both bash and zsh output when changing the shell hook
   contract.
 - Treat the prepared Docker sandbox as the default end-to-end verification lane

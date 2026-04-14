@@ -24,15 +24,15 @@ def test_state_serialization_round_trip() -> None:
         base_env="base",
         active_env="work",
         managed_home_path="/tmp/home/.codex",
-        managed_root="/tmp/home/.packagent-v1",
-        last_link_target="/tmp/home/.packagent-v1/envs/work/.codex",
+        managed_root="/tmp/home/.packagent",
+        last_link_target="/tmp/home/.packagent/envs/work/.codex",
         envs={
             "base": EnvMetadata(
                 name="base",
                 host="codex",
                 source="imported-home",
                 created_at="2026-04-02T00:00:00Z",
-                imported_from="/tmp/home/.packagent-v1/backups/20260402T000000Z",
+                imported_from="/tmp/home/.packagent/backups/20260402T000000Z",
             ),
             "work": EnvMetadata(
                 name="work",
@@ -46,7 +46,7 @@ def test_state_serialization_round_trip() -> None:
             BackupRecord(
                 created_at="2026-04-02T00:00:00Z",
                 reason="takeover_directory",
-                backup_path="/tmp/home/.packagent-v1/backups/20260402T000000Z",
+                backup_path="/tmp/home/.packagent/backups/20260402T000000Z",
                 original_home="/tmp/home/.codex",
             ),
         ],
@@ -54,12 +54,12 @@ def test_state_serialization_round_trip() -> None:
             "codex-home": ManagedTargetState(
                 key="codex-home",
                 managed_home_path="/tmp/home/.codex",
-                last_link_target="/tmp/home/.packagent-v1/envs/work/.codex",
+                last_link_target="/tmp/home/.packagent/envs/work/.codex",
             ),
             "agents-home": ManagedTargetState(
                 key="agents-home",
                 managed_home_path="/tmp/home/.agents",
-                last_link_target="/tmp/home/.packagent-v1/envs/work/.agents",
+                last_link_target="/tmp/home/.packagent/envs/work/.agents",
             ),
         },
     )
