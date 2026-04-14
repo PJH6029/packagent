@@ -34,11 +34,12 @@ main() {
   uv --version
   npm --version
   codex --version || true
+  claude --version || true
 
   echo "== clean previous state =="
-  rm -rf "$HOME/.packagent" "$HOME/.packagent-v1" "$HOME/.codex" "$HOME/.agents"
+  rm -rf "$HOME/.packagent" "$HOME/.packagent-v1" "$HOME/.codex" "$HOME/.agents" "$HOME/.claude"
 
-  echo "== seed unmanaged Codex user-level targets =="
+  echo "== seed unmanaged user-level targets =="
   mkdir -p "$HOME/.codex"
   cat > "$HOME/.codex/AGENTS.md" <<'EOF'
 Legacy AGENTS content
@@ -46,6 +47,10 @@ EOF
   mkdir -p "$HOME/.agents/skills/legacy-skill"
   cat > "$HOME/.agents/skills/legacy-skill/SKILL.md" <<'EOF'
 Legacy skill content
+EOF
+  mkdir -p "$HOME/.claude"
+  cat > "$HOME/.claude/settings.json" <<'EOF'
+{"legacy": true}
 EOF
 
   echo "== install packagent via uv tool =="
@@ -69,25 +74,32 @@ EOF
   local root="$HOME/.packagent"
   local base_home="$root/envs/base/.codex"
   local base_agents="$root/envs/base/.agents"
+  local base_claude="$root/envs/base/.claude"
   local demo_home="$root/envs/codex-with-demo/.codex"
   local demo_agents="$root/envs/codex-with-demo/.agents"
+  local demo_claude="$root/envs/codex-with-demo/.claude"
   local second_home="$root/envs/second/.codex"
   local second_agents="$root/envs/second/.agents"
+  local second_claude="$root/envs/second/.claude"
 
   assert_symlink_target "$HOME/.codex" "$demo_home"
   assert_symlink_target "$HOME/.agents" "$demo_agents"
+  assert_symlink_target "$HOME/.claude" "$demo_claude"
   assert_path_exists "$base_home/AGENTS.md"
   assert_path_exists "$base_agents/skills/legacy-skill/SKILL.md"
+  assert_path_exists "$base_claude/settings.json"
   grep -q "Legacy AGENTS content" "$base_home/AGENTS.md" || fail "base env did not import legacy home"
   grep -q "Legacy skill content" "$base_agents/skills/legacy-skill/SKILL.md" || fail "base env did not import legacy agents home"
+  grep -q '"legacy": true' "$base_claude/settings.json" || fail "base env did not import legacy Claude home"
 
   echo "== verify npm global installs work for the sandbox user =="
   [ "$(npm config get prefix)" = "$HOME/.local" ] || fail "npm global prefix is not user-local"
-  npm install -g @openai/codex oh-my-codex >/tmp/packagent-npm-install.txt 2>&1 || {
+  npm install -g @openai/codex @anthropic-ai/claude-code oh-my-codex >/tmp/packagent-npm-install.txt 2>&1 || {
     cat /tmp/packagent-npm-install.txt >&2
     fail "npm global install failed for sandbox user"
   }
   command -v omx >/dev/null || fail "omx was not installed into the sandbox user's PATH"
+  command -v claude >/dev/null || fail "claude was not installed into the sandbox user's PATH"
 
   echo "== simulate harness writing into active targets =="
   mkdir -p "$HOME/.codex/skills/demo-skill"
@@ -109,36 +121,47 @@ EOF
   cat > "$HOME/.codex/AGENTS.md" <<'EOF'
 Active env AGENTS content
 EOF
+  cat > "$HOME/.claude/settings.json" <<'EOF'
+{"active": "codex-with-demo"}
+EOF
 
   assert_path_exists "$demo_home/skills/demo-skill/SKILL.md"
   assert_path_exists "$demo_agents/skills/user-skill/SKILL.md"
+  assert_path_exists "$demo_claude/settings.json"
 
   echo "== create second env and verify isolation =="
   packagent create -n second
   packagent activate second
   assert_symlink_target "$HOME/.codex" "$second_home"
   assert_symlink_target "$HOME/.agents" "$second_agents"
+  assert_symlink_target "$HOME/.claude" "$second_claude"
   assert_path_missing "$HOME/.codex/skills/demo-skill/SKILL.md"
   assert_path_missing "$HOME/.agents/skills/user-skill/SKILL.md"
+  assert_path_missing "$HOME/.claude/settings.json"
 
   echo "== force doctor repair path =="
   rm -f "$HOME/.codex"
   ln -s "$base_home" "$HOME/.codex"
   rm -f "$HOME/.agents"
   ln -s "$base_agents" "$HOME/.agents"
+  rm -f "$HOME/.claude"
+  ln -s "$base_claude" "$HOME/.claude"
   if packagent doctor >/tmp/packagent-doctor-before.txt 2>&1; then
     fail "doctor should have reported drift before repair"
   fi
   packagent doctor --fix >/tmp/packagent-doctor-after.txt
   assert_symlink_target "$HOME/.codex" "$second_home"
   assert_symlink_target "$HOME/.agents" "$second_agents"
+  assert_symlink_target "$HOME/.claude" "$second_claude"
 
   echo "== deactivate back to base =="
   packagent deactivate
   assert_symlink_target "$HOME/.codex" "$base_home"
   assert_symlink_target "$HOME/.agents" "$base_agents"
+  assert_symlink_target "$HOME/.claude" "$base_claude"
   grep -q "Legacy AGENTS content" "$HOME/.codex/AGENTS.md" || fail "base env was not restored on deactivate"
   grep -q "Legacy skill content" "$HOME/.agents/skills/legacy-skill/SKILL.md" || fail "base agents env was not restored on deactivate"
+  grep -q '"legacy": true' "$HOME/.claude/settings.json" || fail "base Claude env was not restored on deactivate"
 
   echo "== remove non-active env and uninstall packagent =="
   packagent remove codex-with-demo

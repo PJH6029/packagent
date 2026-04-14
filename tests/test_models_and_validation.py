@@ -61,6 +61,11 @@ def test_state_serialization_round_trip() -> None:
                 managed_home_path="/tmp/home/.agents",
                 last_link_target="/tmp/home/.packagent/envs/work/.agents",
             ),
+            "claude-home": ManagedTargetState(
+                key="claude-home",
+                managed_home_path="/tmp/home/.claude",
+                last_link_target="/tmp/home/.packagent/envs/work/.claude",
+            ),
         },
     )
 

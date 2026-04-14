@@ -70,5 +70,10 @@ class CodexHost(HostAdapter):
                     primary=True,
                 ),
                 ManagedTarget(key="agents-home", home_dir_name=".agents"),
+                ManagedTarget(
+                    key="claude-home",
+                    home_dir_name=".claude",
+                    home_env_var="CLAUDE_CONFIG_DIR",
+                ),
             ),
         )

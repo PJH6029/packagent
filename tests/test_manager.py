@@ -45,10 +45,14 @@ def test_home_inspection_detects_missing_directory_and_managed_symlink(manager: 
     assert inspection.managed_env == "work"
 
 
-def test_agents_target_inspection_detects_managed_symlink(manager: PackagentManager) -> None:
+@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+def test_companion_target_inspection_detects_managed_symlink(
+    manager: PackagentManager,
+    target_key: str,
+) -> None:
     backend = GlobalSymlinkBackend()
     host = CodexHost()
-    target = host.target_by_key("agents-home")
+    target = host.target_by_key(target_key)
 
     inspection = backend.inspect(manager.paths, host, target)
     assert inspection.kind == HOME_KIND_MISSING
@@ -105,21 +109,33 @@ def test_first_activation_imports_existing_home_into_base_and_replaces_link(mana
     assert backups
 
 
-def test_first_activation_imports_existing_agents_home_into_base_and_replaces_link(manager: PackagentManager) -> None:
-    agents_target = manager.host.target_by_key("agents-home")
-    legacy_agents = manager.host.managed_target_path(manager.paths, agents_target)
-    legacy_agents.mkdir(parents=True)
-    (legacy_agents / "skills" / "demo").mkdir(parents=True)
-    (legacy_agents / "skills" / "demo" / "SKILL.md").write_text("legacy-skill", encoding="utf-8")
+@pytest.mark.parametrize(
+    ("target_key", "legacy_parts", "content"),
+    [
+        ("agents-home", ("skills", "demo", "SKILL.md"), "legacy-skill"),
+        ("claude-home", ("settings.json",), '{"theme":"legacy"}'),
+    ],
+)
+def test_first_activation_imports_existing_companion_home_into_base_and_replaces_link(
+    manager: PackagentManager,
+    target_key: str,
+    legacy_parts: tuple[str, ...],
+    content: str,
+) -> None:
+    target = manager.host.target_by_key(target_key)
+    legacy_home = manager.host.managed_target_path(manager.paths, target)
+    legacy_file = legacy_home.joinpath(*legacy_parts)
+    legacy_file.parent.mkdir(parents=True)
+    legacy_file.write_text(content, encoding="utf-8")
 
     manager.create_env("work")
     manager.activate_env("work")
 
-    base_agents = manager.host.env_target_path(manager.paths, "base", agents_target)
-    work_agents = manager.host.env_target_path(manager.paths, "work", agents_target)
-    assert legacy_agents.is_symlink()
-    assert legacy_agents.resolve() == work_agents
-    assert base_agents.joinpath("skills", "demo", "SKILL.md").read_text(encoding="utf-8") == "legacy-skill"
+    base_home = manager.host.env_target_path(manager.paths, "base", target)
+    work_home = manager.host.env_target_path(manager.paths, "work", target)
+    assert legacy_home.is_symlink()
+    assert legacy_home.resolve() == work_home
+    assert base_home.joinpath(*legacy_parts).read_text(encoding="utf-8") == content
 
 
 def test_activation_keeps_env_writes_isolated(manager: PackagentManager) -> None:
@@ -139,26 +155,32 @@ def test_activation_keeps_env_writes_isolated(manager: PackagentManager) -> None
     assert manager.host.managed_home_path(manager.paths).resolve() == manager.host.env_home_path(manager.paths, "env-b")
 
 
-def test_activation_keeps_codex_and_agents_writes_isolated(manager: PackagentManager) -> None:
+def test_activation_keeps_all_target_writes_isolated(manager: PackagentManager) -> None:
     agents_target = manager.host.target_by_key("agents-home")
+    claude_target = manager.host.target_by_key("claude-home")
     manager.create_env("env-a")
     manager.create_env("env-b")
 
     manager.activate_env("env-a")
     codex_home = manager.host.managed_home_path(manager.paths)
     agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    claude_home = manager.host.managed_target_path(manager.paths, claude_target)
     codex_home.joinpath("AGENTS.md").write_text("from-a", encoding="utf-8")
     agents_home.joinpath("skills").mkdir()
     agents_home.joinpath("skills", "demo.txt").write_text("skill-a", encoding="utf-8")
+    claude_home.joinpath("settings.json").write_text('{"env":"a"}', encoding="utf-8")
 
     manager.activate_env("env-b")
 
     assert manager.host.env_home_path(manager.paths, "env-a").joinpath("AGENTS.md").read_text(encoding="utf-8") == "from-a"
     assert manager.host.env_target_path(manager.paths, "env-a", agents_target).joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "skill-a"
+    assert manager.host.env_target_path(manager.paths, "env-a", claude_target).joinpath("settings.json").read_text(encoding="utf-8") == '{"env":"a"}'
     assert not manager.host.env_home_path(manager.paths, "env-b").joinpath("AGENTS.md").exists()
     assert not manager.host.env_target_path(manager.paths, "env-b", agents_target).joinpath("skills", "demo.txt").exists()
+    assert not manager.host.env_target_path(manager.paths, "env-b", claude_target).joinpath("settings.json").exists()
     assert codex_home.resolve() == manager.host.env_home_path(manager.paths, "env-b")
     assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-b", agents_target)
+    assert claude_home.resolve() == manager.host.env_target_path(manager.paths, "env-b", claude_target)
 
 
 def test_deactivate_restores_base(manager: PackagentManager) -> None:
@@ -189,6 +211,7 @@ def test_custom_codex_home_does_not_move_agents_home(manager: PackagentManager, 
     custom_home = manager.paths.home / ".config" / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(custom_home))
     agents_target = manager.host.target_by_key("agents-home")
+    claude_target = manager.host.target_by_key("claude-home")
 
     manager.create_env("work")
     manager.activate_env("work")
@@ -197,6 +220,23 @@ def test_custom_codex_home_does_not_move_agents_home(manager: PackagentManager, 
     assert agents_home == manager.paths.home / ".agents"
     assert agents_home.is_symlink()
     assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "work", agents_target)
+    claude_home = manager.host.managed_target_path(manager.paths, claude_target)
+    assert claude_home == manager.paths.home / ".claude"
+    assert claude_home.is_symlink()
+    assert claude_home.resolve() == manager.host.env_target_path(manager.paths, "work", claude_target)
+
+
+def test_activation_uses_existing_claude_config_dir(manager: PackagentManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    custom_home = manager.paths.home / ".config" / "claude-home"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(custom_home))
+    claude_target = manager.host.target_by_key("claude-home")
+
+    manager.create_env("work")
+    manager.activate_env("work")
+
+    assert manager.host.managed_target_path(manager.paths, claude_target) == custom_home
+    assert custom_home.is_symlink()
+    assert custom_home.resolve() == manager.host.env_target_path(manager.paths, "work", claude_target)
 
 
 def test_create_clone_base_copies_home_contents(manager: PackagentManager) -> None:
@@ -212,16 +252,20 @@ def test_create_clone_base_copies_home_contents(manager: PackagentManager) -> No
 
 def test_create_clone_base_copies_all_target_contents(manager: PackagentManager) -> None:
     agents_target = manager.host.target_by_key("agents-home")
+    claude_target = manager.host.target_by_key("claude-home")
     manager.status()
     manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").write_text("codex", encoding="utf-8")
     base_agents = manager.host.env_target_path(manager.paths, "base", agents_target)
     base_agents.joinpath("skills").mkdir()
     base_agents.joinpath("skills", "demo.txt").write_text("agents", encoding="utf-8")
+    base_claude = manager.host.env_target_path(manager.paths, "base", claude_target)
+    base_claude.joinpath("settings.json").write_text("claude", encoding="utf-8")
 
     manager.create_env("copy-base", clone_from="base")
 
     assert manager.host.env_home_path(manager.paths, "copy-base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
     assert manager.host.env_target_path(manager.paths, "copy-base", agents_target).joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "agents"
+    assert manager.host.env_target_path(manager.paths, "copy-base", claude_target).joinpath("settings.json").read_text(encoding="utf-8") == "claude"
 
 
 def test_doctor_detects_and_repairs_symlink_drift(manager: PackagentManager) -> None:
@@ -240,76 +284,92 @@ def test_doctor_detects_and_repairs_symlink_drift(manager: PackagentManager) -> 
     assert home.resolve() == manager.host.env_home_path(manager.paths, "env-a")
 
 
-def test_doctor_detects_and_repairs_agents_symlink_drift(manager: PackagentManager) -> None:
-    agents_target = manager.host.target_by_key("agents-home")
+@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+def test_doctor_detects_and_repairs_companion_symlink_drift(
+    manager: PackagentManager,
+    target_key: str,
+) -> None:
+    target = manager.host.target_by_key(target_key)
     manager.create_env("env-a")
     manager.activate_env("env-a")
 
-    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
-    agents_home.unlink()
-    agents_home.symlink_to(manager.host.env_target_path(manager.paths, "base", agents_target))
+    home = manager.host.managed_target_path(manager.paths, target)
+    home.unlink()
+    home.symlink_to(manager.host.env_target_path(manager.paths, "base", target))
 
     report = manager.doctor()
-    assert any("agents-home" in issue for issue in report.issues)
+    assert any(target_key in issue for issue in report.issues)
 
     fixed = manager.doctor(fix=True)
     assert not fixed.issues
-    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-a", agents_target)
+    assert home.resolve() == manager.host.env_target_path(manager.paths, "env-a", target)
 
 
-def test_doctor_detects_and_repairs_missing_agents_symlink(manager: PackagentManager) -> None:
-    agents_target = manager.host.target_by_key("agents-home")
+@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+def test_doctor_detects_and_repairs_missing_companion_symlink(
+    manager: PackagentManager,
+    target_key: str,
+) -> None:
+    target = manager.host.target_by_key(target_key)
     manager.create_env("env-a")
     manager.activate_env("env-a")
 
-    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
-    agents_home.unlink()
+    home = manager.host.managed_target_path(manager.paths, target)
+    home.unlink()
 
     report = manager.doctor()
-    assert any("agents-home" in issue for issue in report.issues)
+    assert any(target_key in issue for issue in report.issues)
 
     fixed = manager.doctor(fix=True)
     assert not fixed.issues
-    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-a", agents_target)
+    assert home.resolve() == manager.host.env_target_path(manager.paths, "env-a", target)
 
 
-def test_doctor_detects_and_repairs_unmanaged_agents_directory(manager: PackagentManager) -> None:
-    agents_target = manager.host.target_by_key("agents-home")
+@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+def test_doctor_detects_and_repairs_unmanaged_companion_directory(
+    manager: PackagentManager,
+    target_key: str,
+) -> None:
+    target = manager.host.target_by_key(target_key)
     manager.create_env("env-a")
     manager.activate_env("env-a")
 
-    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
-    agents_home.unlink()
-    agents_home.mkdir()
-    agents_home.joinpath("memory.md").write_text("legacy", encoding="utf-8")
+    home = manager.host.managed_target_path(manager.paths, target)
+    home.unlink()
+    home.mkdir()
+    home.joinpath("memory.md").write_text("legacy", encoding="utf-8")
 
     report = manager.doctor()
-    assert any("agents-home" in issue for issue in report.issues)
+    assert any(target_key in issue for issue in report.issues)
 
     fixed = manager.doctor(fix=True)
     assert not fixed.issues
-    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-a", agents_target)
-    assert manager.host.env_target_path(manager.paths, "base", agents_target).joinpath("memory.md").read_text(encoding="utf-8") == "legacy"
+    assert home.resolve() == manager.host.env_target_path(manager.paths, "env-a", target)
+    assert manager.host.env_target_path(manager.paths, "base", target).joinpath("memory.md").read_text(encoding="utf-8") == "legacy"
 
 
-def test_doctor_detects_and_repairs_broken_agents_managed_symlink(manager: PackagentManager) -> None:
-    agents_target = manager.host.target_by_key("agents-home")
+@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+def test_doctor_detects_and_repairs_broken_companion_managed_symlink(
+    manager: PackagentManager,
+    target_key: str,
+) -> None:
+    target = manager.host.target_by_key(target_key)
     manager.create_env("env-a")
     manager.activate_env("env-a")
 
-    broken_target = manager.host.env_target_path(manager.paths, "missing-env", agents_target)
-    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
-    agents_home.unlink()
-    agents_home.symlink_to(broken_target)
+    broken_target = manager.host.env_target_path(manager.paths, "missing-env", target)
+    home = manager.host.managed_target_path(manager.paths, target)
+    home.unlink()
+    home.symlink_to(broken_target)
 
-    inspection = manager.backend.inspect(manager.paths, manager.host, agents_target)
+    inspection = manager.backend.inspect(manager.paths, manager.host, target)
     assert inspection.kind == HOME_KIND_BROKEN_MANAGED
     report = manager.doctor()
-    assert any("agents-home" in issue for issue in report.issues)
+    assert any(target_key in issue for issue in report.issues)
 
     fixed = manager.doctor(fix=True)
     assert not fixed.issues
-    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-a", agents_target)
+    assert home.resolve() == manager.host.env_target_path(manager.paths, "env-a", target)
 
 
 def test_schema_v1_state_migrates_to_managed_targets(manager: PackagentManager) -> None:
@@ -332,9 +392,10 @@ def test_schema_v1_state_migrates_to_managed_targets(manager: PackagentManager) 
     migrated = manager.load_state()
 
     assert migrated.schema_version == 2
-    assert sorted(migrated.managed_targets) == ["agents-home", "codex-home"]
+    assert sorted(migrated.managed_targets) == ["agents-home", "claude-home", "codex-home"]
     assert migrated.managed_targets["codex-home"].last_link_target == str(manager.paths.env_dir("base") / ".codex")
     assert manager.host.env_target_path(manager.paths, "base", manager.host.target_by_key("agents-home")).exists()
+    assert manager.host.env_target_path(manager.paths, "base", manager.host.target_by_key("claude-home")).exists()
 
 
 def test_harness_style_write_and_read_follow_the_active_home(manager: PackagentManager) -> None:
@@ -371,6 +432,7 @@ def test_cli_shell_init_bootstraps_base_prompt_state(
     assert exit_code == 0
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
     assert "export CODEX_HOME=" not in output
+    assert "export CLAUDE_CONFIG_DIR=" not in output
 
 
 def test_cli_init_writes_detected_shell_rc_file(
@@ -422,6 +484,7 @@ def test_cli_deactivate_emits_base_activation_commands(
     assert exit_code == 0
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
     assert "export CODEX_HOME=" not in output
+    assert "export CLAUDE_CONFIG_DIR=" not in output
 
 
 def test_cli_list_and_status_are_script_friendly(manager: PackagentManager, capsys: pytest.CaptureFixture[str]) -> None:
@@ -438,3 +501,4 @@ def test_cli_list_and_status_are_script_friendly(manager: PackagentManager, caps
     assert "active_env=base" in status_output
     assert "target\tcodex-home\t" in status_output
     assert "target\tagents-home\t" in status_output
+    assert "target\tclaude-home\t" in status_output
