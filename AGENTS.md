@@ -58,6 +58,12 @@ These instructions apply to the entire repository.
   onboarding behavior changes.
 - When Docker is available and the change is substantial, run
   `./scripts/run_docker_sandbox.sh test` before finishing.
+- In addition to the scripted Docker test, run an interactive Docker check with
+  `./scripts/run_docker_sandbox.sh shell` when changing or regressing
+  user-facing flows that depend on terminal interaction or real shell state,
+  such as newly implemented or refactored `init`, activation/deactivation,
+  shell bootstrap, prompt handling, backup/takeover prompts, deletion flows, or
+  Docker onboarding behavior.
 - Keep `scripts/e2e_in_docker.sh` aligned with the current supported workflow.
   Expand it when behavior changes so the Docker smoke test covers the relevant
   real-user path instead of relying only on unit tests.
@@ -92,6 +98,8 @@ These instructions apply to the entire repository.
   - `./.venv/bin/python -m build` when packaging behavior changes
   - `./scripts/run_docker_sandbox.sh test` when the change affects user-facing
     flows and Docker is available
+  - `./scripts/run_docker_sandbox.sh shell` for an interactive smoke check when
+    the change affects terminal-facing flows, prompts, or shell behavior
 - On machines with older `pip`, editable installs may not work with the current
   `pyproject.toml` backend. In that case, use direct test-tool installation or a
   wheel install for smoke checks instead of rewriting packaging just to satisfy
