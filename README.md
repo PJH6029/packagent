@@ -94,6 +94,11 @@ Each environment lives under `~/.packagent/envs/<env>/`:
 Activating an env switches the managed user-level targets to symlinks pointing
 at that env. Only one env is globally active at a time.
 
+The shell hook also exposes the active env in your prompt. Plain bash/zsh get a
+`(<env>)` prefix, and Oh My Bash Powerline-style themes get a `[pa] <env>`
+segment. For custom themes, use `packagent_prompt_info` or
+`PACKAGENT_PROMPT_MODIFIER`.
+
 By default, `packagent` manages:
 
 - `~/.codex`
@@ -220,6 +225,16 @@ The scripted smoke flow exercises local installation, shell integration,
 first-run takeover, auth-only seed copying, env creation and activation,
 fresh-base backup behavior, isolation across `.codex`, `.agents`, and
 `.claude`, `doctor --fix`, deactivation, env removal, and uninstall.
+
+Run optional real prompt-framework checks for Oh My Bash and Oh My Zsh:
+
+```bash
+PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS=1 ./scripts/run_docker_sandbox.sh test
+```
+
+When local `~/.oh-my-bash` or `~/.oh-my-zsh` directories exist, the wrapper
+mounts them read-only for those optional checks. Otherwise the container clones
+the frameworks during the test.
 
 Inside the container, the repo is available at `/workspace`:
 

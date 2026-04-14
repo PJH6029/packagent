@@ -75,7 +75,15 @@ The hook itself:
 - wraps `packagent activate` and `packagent deactivate`
 - evaluates shell code printed by the Python CLI
 - bootstraps the shell to the manager's current active env, usually `base`
-- updates the shell prompt prefix
+- updates prompt metadata through `PACKAGENT_PROMPT_MODIFIER` and
+  `packagent_prompt_info`
+- composes with existing bash `PROMPT_COMMAND` hooks instead of replacing them
+- registers through Oh My Bash prompt hooks when available
+- uses zsh `add-zsh-hook` or `precmd_functions` without replacing theme hooks
+- adds an Oh My Bash Powerline segment named `packagent` when that prompt model
+  is active, otherwise falls back to a `(<env>)` prompt prefix
+- removes its previous prompt prefix before adding a new one, including when
+  tools such as Conda have prepended their own prompt modifier
 - leaves any existing `CODEX_HOME` export untouched
 - leaves any existing `CLAUDE_CONFIG_DIR` export untouched
 

@@ -25,6 +25,97 @@ assert_symlink_target() {
   [ "$resolved" = "$expected" ] || fail "expected $path -> $expected, got $resolved"
 }
 
+prepare_prompt_framework() {
+  local label="$1"
+  local mounted_source="$2"
+  local git_url="$3"
+  local target_dir="$4"
+
+  rm -rf "$target_dir"
+  if [ -d "$mounted_source" ]; then
+    echo "== copying ${label} from mounted source =="
+    mkdir -p "$target_dir"
+    cp -a "$mounted_source/." "$target_dir/"
+    return 0
+  fi
+
+  echo "== cloning ${label} =="
+  git clone --depth 1 "$git_url" "$target_dir" >/tmp/packagent-${label// /-}-clone.txt 2>&1 || {
+    cat "/tmp/packagent-${label// /-}-clone.txt" >&2
+    fail "failed to clone ${label}"
+  }
+}
+
+run_real_prompt_framework_tests() {
+  local omb_dir="/tmp/packagent-real-oh-my-bash"
+  local omz_dir="/tmp/packagent-real-oh-my-zsh"
+
+  prepare_prompt_framework \
+    "Oh My Bash" \
+    "/tmp/packagent-host-config/oh-my-bash" \
+    "https://github.com/ohmybash/oh-my-bash.git" \
+    "$omb_dir"
+  prepare_prompt_framework \
+    "Oh My Zsh" \
+    "/tmp/packagent-host-config/oh-my-zsh" \
+    "https://github.com/ohmyzsh/ohmyzsh.git" \
+    "$omz_dir"
+
+  echo "== verify real oh-my-bash powerline prompt =="
+  OSH="$omb_dir" bash --norc -i -c '
+    set +u
+    set -e
+    OSH_THEME=powerline
+    completions=()
+    aliases=()
+    plugins=()
+    source "$OSH/oh-my-bash.sh"
+    PACKAGENT_ACTIVE_ENV=base
+    eval "$(packagent shell init bash)"
+    PACKAGENT_ACTIVE_ENV=codex-omx
+    eval "$PROMPT_COMMAND"
+    case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
+      *"_omb_util_prompt_command_hook"*) ;;
+      *) echo "PROMPT_COMMAND missing Oh My Bash hook: $(declare -p PROMPT_COMMAND 2>/dev/null || true)" >&2; exit 1 ;;
+    esac
+    case "$(declare -p _omb_util_prompt_command 2>/dev/null)" in
+      *"_packagent_prompt_command"*) ;;
+      *) echo "Oh My Bash hook list missing packagent: $(declare -p _omb_util_prompt_command 2>/dev/null || true)" >&2; exit 1 ;;
+    esac
+    case " $POWERLINE_PROMPT " in
+      *" packagent "*) ;;
+      *) echo "POWERLINE_PROMPT missing packagent: $POWERLINE_PROMPT" >&2; exit 1 ;;
+    esac
+    case "$PS1" in
+      *"[pa] codex-omx"*) ;;
+      *) echo "PS1 missing packagent segment: $PS1" >&2; exit 1 ;;
+    esac
+  ' >/tmp/packagent-real-omb.txt 2>&1 || {
+    cat /tmp/packagent-real-omb.txt >&2
+    fail "real Oh My Bash prompt test failed"
+  }
+
+  echo "== verify real oh-my-zsh prompt composition =="
+  ZSH="$omz_dir" zsh -fic '
+    unsetopt nounset 2>/dev/null || true
+    ZSH_THEME=robbyrussell
+    plugins=()
+    source "$ZSH/oh-my-zsh.sh" || exit 1
+    PACKAGENT_ACTIVE_ENV=base
+    eval "$(packagent shell init zsh)" || exit 1
+    PACKAGENT_ACTIVE_ENV=codex-omx
+    _packagent_prompt_command
+    [ "$(packagent_prompt_info)" = "(codex-omx) " ] || exit 1
+    case "$PROMPT" in
+      "(codex-omx) "*) ;;
+      *) echo "PROMPT missing packagent prefix: $PROMPT" >&2; exit 1 ;;
+    esac
+  ' >/tmp/packagent-real-omz.txt 2>&1 || {
+    cat /tmp/packagent-real-omz.txt >&2
+    fail "real Oh My Zsh prompt test failed"
+  }
+}
+
 main() {
   export HOME="${HOME:-/home/tester}"
   export PATH="$HOME/.local/bin:$PATH"
@@ -101,6 +192,114 @@ EOF
     cat /tmp/packagent-bashrc-resource.txt >&2
     fail "bashrc repeated source failed"
   }
+  echo "== verify oh-my-bash style prompt composition =="
+  bash -lc '
+    set -euo pipefail
+    _omb_util_prompt_command=()
+    _omb_util_add_prompt_command() {
+      local hook
+      for hook in "${_omb_util_prompt_command[@]}"; do
+        [ "$hook" = "$1" ] && return 0
+      done
+      _omb_util_prompt_command+=("$1")
+      PROMPT_COMMAND="_omb_util_prompt_command_hook"
+    }
+    _omb_util_prompt_command_hook() {
+      local hook
+      for hook in "${_omb_util_prompt_command[@]}"; do
+        "$hook"
+      done
+    }
+    _omb_theme_PROMPT_COMMAND() {
+      PS1="theme$ "
+    }
+    _omb_util_add_prompt_command _omb_theme_PROMPT_COMMAND
+    PACKAGENT_ACTIVE_ENV=base
+    eval "$(packagent shell init bash)"
+    [ "${PROMPT_COMMAND-}" = "_omb_util_prompt_command_hook" ]
+    [ "${_omb_util_prompt_command[0]}" = "_omb_theme_PROMPT_COMMAND" ]
+    [ "${_omb_util_prompt_command[1]}" = "_packagent_prompt_command" ]
+    _omb_util_prompt_command_hook
+    [ "$PS1" = "(base) theme$ " ]
+  ' >/tmp/packagent-omb-prompt.txt 2>&1 || {
+    cat /tmp/packagent-omb-prompt.txt >&2
+    fail "oh-my-bash style prompt composition failed"
+  }
+  echo "== verify oh-my-bash powerline prompt segment =="
+  bash -lc '
+    set -euo pipefail
+    _omb_util_prompt_command=()
+    _omb_util_add_prompt_command() {
+      local hook
+      for hook in "${_omb_util_prompt_command[@]}"; do
+        [ "$hook" = "$1" ] && return 0
+      done
+      _omb_util_prompt_command+=("$1")
+      PROMPT_COMMAND="_omb_util_prompt_command_hook"
+    }
+    _omb_util_prompt_command_hook() {
+      local hook
+      for hook in "${_omb_util_prompt_command[@]}"; do
+        "$hook"
+      done
+    }
+    POWERLINE_PROMPT="user_info scm cwd"
+    PYTHON_VENV_THEME_PROMPT_COLOR=35
+    __powerline_user_info_prompt() { printf "user|32\n"; }
+    __powerline_scm_prompt() { return 1; }
+    __powerline_cwd_prompt() { printf "~/code|240\n"; }
+    _omb_theme_PROMPT_COMMAND() {
+      local segment info
+      PS1=""
+      for segment in $POWERLINE_PROMPT; do
+        info=""
+        if command -v "__powerline_${segment}_prompt" >/dev/null 2>&1; then
+          info="$("__powerline_${segment}_prompt")" || true
+        fi
+        [ -n "$info" ] && PS1="${PS1}${info} "
+      done
+    }
+    _omb_util_add_prompt_command _omb_theme_PROMPT_COMMAND
+    PACKAGENT_ACTIVE_ENV=base
+    eval "$(packagent shell init bash)"
+    [ "$POWERLINE_PROMPT" = "user_info scm packagent cwd" ]
+    _omb_util_prompt_command_hook
+    case "$PS1" in
+      *"[pa] base|35"*) ;;
+      *) echo "missing packagent powerline segment: $PS1" >&2; exit 1 ;;
+    esac
+    case "$PS1" in
+      "(base) "*) echo "unexpected fallback prefix: $PS1" >&2; exit 1 ;;
+    esac
+  ' >/tmp/packagent-omb-powerline.txt 2>&1 || {
+    cat /tmp/packagent-omb-powerline.txt >&2
+    fail "oh-my-bash powerline prompt segment failed"
+  }
+  echo "== verify zsh prompt hook composition =="
+  zsh -fc '
+    set -e
+    PROMPT="theme%# "
+    _theme_precmd() {
+      PROMPT="theme%# "
+    }
+    precmd_functions=(_theme_precmd)
+    PACKAGENT_ACTIVE_ENV=base
+    eval "$(packagent shell init zsh)"
+    _theme_precmd
+    _packagent_prompt_command
+    [ "$PROMPT" = "(base) theme%# " ]
+    [ "$(packagent_prompt_info)" = "(base) " ]
+    PACKAGENT_ACTIVE_ENV=work
+    _theme_precmd
+    _packagent_prompt_command
+    [ "$PROMPT" = "(work) theme%# " ]
+  ' >/tmp/packagent-zsh-prompt.txt 2>&1 || {
+    cat /tmp/packagent-zsh-prompt.txt >&2
+    fail "zsh prompt hook composition failed"
+  }
+  if [ "${PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS:-0}" != "0" ]; then
+    run_real_prompt_framework_tests
+  fi
   # Bootstrap the current non-interactive test shell after verifying rc-file installation.
   eval "$(packagent shell init bash)"
   [ "${PACKAGENT_ACTIVE_ENV:-}" = "base" ] || fail "base env was not active after shell init"

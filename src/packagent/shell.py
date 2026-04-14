@@ -198,31 +198,128 @@ def _upsert_init_block(existing: str, block: str) -> str:
 
 def _render_bash_init() -> str:
     return """
-if [ -z "${PACKAGENT_ORIGINAL_PS1+x}" ]; then
-  export PACKAGENT_ORIGINAL_PS1="${PS1-}"
-fi
-if [ -z "${PACKAGENT_ORIGINAL_PROMPT_COMMAND+x}" ]; then
-  if [ "${PROMPT_COMMAND-}" = "_packagent_prompt_command" ]; then
-    PACKAGENT_ORIGINAL_PROMPT_COMMAND=""
-  else
-    PACKAGENT_ORIGINAL_PROMPT_COMMAND="${PROMPT_COMMAND-}"
-  fi
-fi
-_packagent_refresh_prompt() {
-  local base_prompt="${PACKAGENT_ORIGINAL_PS1-}"
+_packagent_update_prompt_modifier() {
   if [ -n "${PACKAGENT_ACTIVE_ENV-}" ]; then
-    PS1="(${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+    PACKAGENT_PROMPT_MODIFIER="(${PACKAGENT_ACTIVE_ENV}) "
+  else
+    PACKAGENT_PROMPT_MODIFIER=""
+  fi
+  export PACKAGENT_PROMPT_MODIFIER
+}
+packagent_prompt_info() {
+  _packagent_update_prompt_modifier
+  [ -n "${PACKAGENT_PROMPT_MODIFIER-}" ] || return 1
+  printf "%s" "${PACKAGENT_PROMPT_MODIFIER}"
+}
+_packagent_remove_prompt_modifier() {
+  local prompt="$1"
+  local modifier="$2"
+  if [ -n "$modifier" ]; then
+    prompt="${prompt/"$modifier"/}"
+  fi
+  printf "%s" "$prompt"
+}
+_packagent_strip_prompt_prefix() {
+  local prompt="$1"
+  prompt="$(_packagent_remove_prompt_modifier "$prompt" "${PACKAGENT_PROMPT_LAST_MODIFIER-}")"
+  prompt="$(_packagent_remove_prompt_modifier "$prompt" "${PACKAGENT_PROMPT_MODIFIER-}")"
+  printf "%s" "$prompt"
+}
+_packagent_word_in_list() {
+  case " $1 " in
+    *" $2 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+_packagent_insert_prompt_segment_before_cwd() {
+  local list="${1-}"
+  local segment
+  local result=""
+  local inserted=""
+  if _packagent_word_in_list "$list" "packagent"; then
+    printf "%s" "$list"
+    return 0
+  fi
+  for segment in $list; do
+    if [ "$segment" = "cwd" ] && [ -z "$inserted" ]; then
+      result="${result:+$result }packagent"
+      inserted=1
+    fi
+    result="${result:+$result }$segment"
+  done
+  if [ -z "$inserted" ]; then
+    result="${result:+$result }packagent"
+  fi
+  printf "%s" "$result"
+}
+__powerline_packagent_prompt() {
+  _packagent_update_prompt_modifier
+  [ -n "${PACKAGENT_ACTIVE_ENV-}" ] || return 1
+  local label="${PACKAGENT_OMB_POWERLINE_LABEL:-[pa] }"
+  local color="${PACKAGENT_OMB_POWERLINE_COLOR:-${PYTHON_VENV_THEME_PROMPT_COLOR:-35}}"
+  printf "%s%s|%s\\n" "$label" "$PACKAGENT_ACTIVE_ENV" "$color"
+}
+_packagent_install_omb_powerline_segment() {
+  PACKAGENT_PROMPT_NATIVE=0
+  if [ -n "${POWERLINE_PROMPT+x}" ]; then
+    POWERLINE_PROMPT="$(_packagent_insert_prompt_segment_before_cwd "$POWERLINE_PROMPT")"
+    PACKAGENT_PROMPT_NATIVE=1
+  fi
+  if [ -n "${POWERLINE_LEFT_PROMPT+x}" ]; then
+    POWERLINE_LEFT_PROMPT="$(_packagent_insert_prompt_segment_before_cwd "$POWERLINE_LEFT_PROMPT")"
+    PACKAGENT_PROMPT_NATIVE=1
+  fi
+}
+_packagent_refresh_prompt() {
+  _packagent_update_prompt_modifier
+  if [ "${PACKAGENT_PROMPT_NATIVE-0}" = "1" ]; then
+    PACKAGENT_PROMPT_LAST_MODIFIER=""
+    return 0
+  fi
+  local base_prompt
+  base_prompt="$(_packagent_strip_prompt_prefix "${PS1-}")"
+  if [ -n "${PACKAGENT_PROMPT_MODIFIER-}" ]; then
+    PS1="${PACKAGENT_PROMPT_MODIFIER}${base_prompt}"
   else
     PS1="${base_prompt}"
   fi
+  PACKAGENT_PROMPT_LAST_MODIFIER="${PACKAGENT_PROMPT_MODIFIER-}"
 }
 _packagent_prompt_command() {
-  if [ -n "${PACKAGENT_ORIGINAL_PROMPT_COMMAND-}" ]; then
-    eval "${PACKAGENT_ORIGINAL_PROMPT_COMMAND}"
-  fi
   _packagent_refresh_prompt
 }
-PROMPT_COMMAND="_packagent_prompt_command"
+_packagent_prompt_command_is_array() {
+  local declaration
+  declaration="$(declare -p PROMPT_COMMAND 2>/dev/null || true)"
+  [[ "$declaration" =~ ^declare[[:space:]]+-[^[:space:]]*a[^[:space:]]*[[:space:]]+PROMPT_COMMAND= ]]
+}
+_packagent_prompt_command_registered() {
+  local command
+  if _packagent_prompt_command_is_array; then
+    for command in "${PROMPT_COMMAND[@]}"; do
+      [ "$command" = "_packagent_prompt_command" ] && return 0
+    done
+    return 1
+  fi
+  case ";${PROMPT_COMMAND-};" in
+    *";_packagent_prompt_command;"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+_packagent_install_prompt_command() {
+  _packagent_install_omb_powerline_segment
+  if command -v _omb_util_add_prompt_command >/dev/null 2>&1; then
+    _omb_util_add_prompt_command _packagent_prompt_command
+    return 0
+  fi
+  _packagent_prompt_command_registered && return 0
+  if _packagent_prompt_command_is_array; then
+    PROMPT_COMMAND+=(_packagent_prompt_command)
+  else
+    PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND};}_packagent_prompt_command"
+  fi
+}
+_packagent_install_prompt_command
 packagent() {
   if [ "$1" = "activate" ] || [ "$1" = "deactivate" ]; then
     local _packagent_output
@@ -238,19 +335,57 @@ _packagent_refresh_prompt
 
 def _render_zsh_init() -> str:
     return """
-if [[ -z "${PACKAGENT_ORIGINAL_PROMPT+x}" ]]; then
-  export PACKAGENT_ORIGINAL_PROMPT="${PROMPT-}"
-fi
-_packagent_refresh_prompt() {
-  local base_prompt="${PACKAGENT_ORIGINAL_PROMPT-}"
+_packagent_update_prompt_modifier() {
   if [[ -n "${PACKAGENT_ACTIVE_ENV-}" ]]; then
-    PROMPT="(${PACKAGENT_ACTIVE_ENV}) ${base_prompt}"
+    PACKAGENT_PROMPT_MODIFIER="(${PACKAGENT_ACTIVE_ENV}) "
+  else
+    PACKAGENT_PROMPT_MODIFIER=""
+  fi
+  export PACKAGENT_PROMPT_MODIFIER
+}
+packagent_prompt_info() {
+  _packagent_update_prompt_modifier
+  [[ -n "${PACKAGENT_PROMPT_MODIFIER-}" ]] || return 1
+  print -r -- "${PACKAGENT_PROMPT_MODIFIER}"
+}
+_packagent_remove_prompt_modifier() {
+  local prompt="$1"
+  local modifier="$2"
+  if [[ -n "$modifier" ]]; then
+    prompt="${prompt/${modifier}/}"
+  fi
+  print -r -- "$prompt"
+}
+_packagent_strip_prompt_prefix() {
+  local prompt="$1"
+  prompt="$(_packagent_remove_prompt_modifier "$prompt" "${PACKAGENT_PROMPT_LAST_MODIFIER-}")"
+  prompt="$(_packagent_remove_prompt_modifier "$prompt" "${PACKAGENT_PROMPT_MODIFIER-}")"
+  print -r -- "$prompt"
+}
+_packagent_refresh_prompt() {
+  _packagent_update_prompt_modifier
+  local base_prompt
+  base_prompt="$(_packagent_strip_prompt_prefix "${PROMPT-}")"
+  if [[ -n "${PACKAGENT_PROMPT_MODIFIER-}" ]]; then
+    PROMPT="${PACKAGENT_PROMPT_MODIFIER}${base_prompt}"
   else
     PROMPT="${base_prompt}"
   fi
+  PACKAGENT_PROMPT_LAST_MODIFIER="${PACKAGENT_PROMPT_MODIFIER-}"
 }
-if (( ${precmd_functions[(I)_packagent_refresh_prompt]} == 0 )); then
-  precmd_functions+=(_packagent_refresh_prompt)
+_packagent_prompt_command() {
+  _packagent_refresh_prompt
+}
+autoload -Uz add-zsh-hook 2>/dev/null || true
+if (( $+functions[add-zsh-hook] )); then
+  add-zsh-hook -d precmd _packagent_refresh_prompt >/dev/null 2>&1 || true
+  add-zsh-hook -d precmd _packagent_prompt_command >/dev/null 2>&1 || true
+  add-zsh-hook precmd _packagent_prompt_command
+else
+  precmd_functions=(${precmd_functions:#_packagent_refresh_prompt})
+  if (( ${precmd_functions[(I)_packagent_prompt_command]} == 0 )); then
+    precmd_functions+=(_packagent_prompt_command)
+  fi
 fi
 packagent() {
   if [[ "$1" == "activate" || "$1" == "deactivate" ]]; then

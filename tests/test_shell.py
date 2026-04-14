@@ -18,8 +18,10 @@ from packagent.shell import (
 def test_bash_shell_init_contains_wrapper_and_prompt_hook() -> None:
     script = render_shell_init("bash")
     assert 'packagent() {' in script
-    assert 'PROMPT_COMMAND="_packagent_prompt_command"' in script
-    assert "PACKAGENT_ORIGINAL_PROMPT_COMMAND" in script
+    assert 'PROMPT_COMMAND="_packagent_prompt_command"' not in script
+    assert "_omb_util_add_prompt_command _packagent_prompt_command" in script
+    assert "packagent_prompt_info()" in script
+    assert "__powerline_packagent_prompt()" in script
     assert 'PACKAGENT_SHELL=bash' in script
 
 
@@ -35,12 +37,56 @@ PS1='prompt$ '
 PROMPT_COMMAND='printf original >> "$PACKAGENT_TEST_PROMPT_OUTPUT"'
 {hook}
 {hook}
-[ "${{PROMPT_COMMAND-}}" = "_packagent_prompt_command" ]
-[ "${{PACKAGENT_ORIGINAL_PROMPT_COMMAND-}}" = 'printf original >> "$PACKAGENT_TEST_PROMPT_OUTPUT"' ]
+case "${{PROMPT_COMMAND-}}" in
+  *"_packagent_prompt_command"*) ;;
+  *) echo "missing packagent prompt command: $PROMPT_COMMAND" >&2; exit 1 ;;
+esac
+case "${{PROMPT_COMMAND-}}" in
+  *"_packagent_prompt_command;_packagent_prompt_command"*) echo "duplicate prompt command: $PROMPT_COMMAND" >&2; exit 1 ;;
+esac
 PACKAGENT_ACTIVE_ENV=base
-_packagent_prompt_command
+eval "$PROMPT_COMMAND"
 case "$PS1" in
   "(base) "*) ;;
+  *) echo "prompt was not refreshed: $PS1" >&2; exit 1 ;;
+esac
+printf "%s" "$(packagent_prompt_info)" > "{prompt_output}.modifier"
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert prompt_output.read_text(encoding="utf-8") == "original"
+    assert Path(f"{prompt_output}.modifier").read_text(encoding="utf-8") == "(base) "
+
+
+def test_bash_shell_init_appends_to_array_prompt_command(tmp_path: Path) -> None:
+    prompt_output = tmp_path / "array-prompt-output.txt"
+    script_path = tmp_path / "array-prompt.bash"
+    hook = render_shell_init("bash")
+    script_path.write_text(
+        f"""
+set -euo pipefail
+export PACKAGENT_TEST_PROMPT_OUTPUT={shlex.quote(str(prompt_output))}
+PS1='prompt$ '
+PROMPT_COMMAND=('printf first >> "$PACKAGENT_TEST_PROMPT_OUTPUT"' 'printf second >> "$PACKAGENT_TEST_PROMPT_OUTPUT"')
+{hook}
+{hook}
+[ "${{#PROMPT_COMMAND[@]}}" -eq 3 ]
+[ "${{PROMPT_COMMAND[2]}}" = "_packagent_prompt_command" ]
+PACKAGENT_ACTIVE_ENV=work
+for command in "${{PROMPT_COMMAND[@]}}"; do
+  eval "$command"
+done
+case "$PS1" in
+  "(work) "*) ;;
   *) echo "prompt was not refreshed: $PS1" >&2; exit 1 ;;
 esac
 """,
@@ -55,13 +101,160 @@ esac
     )
 
     assert result.returncode == 0, result.stderr
-    assert prompt_output.read_text(encoding="utf-8") == "original"
+    assert prompt_output.read_text(encoding="utf-8") == "firstsecond"
+
+
+def test_bash_shell_init_does_not_duplicate_after_conda_prefix(tmp_path: Path) -> None:
+    script_path = tmp_path / "conda-prefix.bash"
+    hook = render_shell_init("bash")
+    script_path.write_text(
+        f"""
+set -euo pipefail
+PS1='prompt$ '
+PACKAGENT_ACTIVE_ENV=base
+{hook}
+_packagent_prompt_command
+[ "$PS1" = '(base) prompt$ ' ]
+PS1="(llm) $PS1"
+_packagent_prompt_command
+[ "$PS1" = '(base) (llm) prompt$ ' ]
+PACKAGENT_ACTIVE_ENV=work
+_packagent_prompt_command
+[ "$PS1" = '(work) (llm) prompt$ ' ]
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_bash_shell_init_registers_with_oh_my_bash_prompt_hook(tmp_path: Path) -> None:
+    script_path = tmp_path / "omb-prompt.bash"
+    hook = render_shell_init("bash")
+    script_path.write_text(
+        f"""
+set -euo pipefail
+PS1='initial$ '
+_omb_util_prompt_command=()
+_omb_util_add_prompt_command() {{
+  local hook
+  for hook in "${{_omb_util_prompt_command[@]}}"; do
+    [ "$hook" = "$1" ] && return 0
+  done
+  _omb_util_prompt_command+=("$1")
+  PROMPT_COMMAND="_omb_util_prompt_command_hook"
+}}
+_omb_util_prompt_command_hook() {{
+  local hook
+  for hook in "${{_omb_util_prompt_command[@]}}"; do
+    "$hook"
+  done
+}}
+_omb_theme_PROMPT_COMMAND() {{
+  PS1='theme$ '
+}}
+_omb_util_add_prompt_command _omb_theme_PROMPT_COMMAND
+PACKAGENT_ACTIVE_ENV=base
+{hook}
+{hook}
+[ "${{PROMPT_COMMAND-}}" = "_omb_util_prompt_command_hook" ]
+[ "${{#_omb_util_prompt_command[@]}}" -eq 2 ]
+[ "${{_omb_util_prompt_command[0]}}" = "_omb_theme_PROMPT_COMMAND" ]
+[ "${{_omb_util_prompt_command[1]}}" = "_packagent_prompt_command" ]
+_omb_util_prompt_command_hook
+[ "$PS1" = '(base) theme$ ' ]
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_bash_shell_init_adds_oh_my_bash_powerline_segment(tmp_path: Path) -> None:
+    script_path = tmp_path / "omb-powerline.bash"
+    hook = render_shell_init("bash")
+    script_path.write_text(
+        f"""
+set -euo pipefail
+PS1='initial$ '
+_omb_util_prompt_command=()
+_omb_util_add_prompt_command() {{
+  local hook
+  for hook in "${{_omb_util_prompt_command[@]}}"; do
+    [ "$hook" = "$1" ] && return 0
+  done
+  _omb_util_prompt_command+=("$1")
+  PROMPT_COMMAND="_omb_util_prompt_command_hook"
+}}
+_omb_util_prompt_command_hook() {{
+  local hook
+  for hook in "${{_omb_util_prompt_command[@]}}"; do
+    "$hook"
+  done
+}}
+POWERLINE_PROMPT='user_info scm cwd'
+PYTHON_VENV_THEME_PROMPT_COLOR=35
+__powerline_user_info_prompt() {{ printf 'user|32\\n'; }}
+__powerline_scm_prompt() {{ return 1; }}
+__powerline_cwd_prompt() {{ printf '~/code|240\\n'; }}
+_omb_theme_PROMPT_COMMAND() {{
+  local segment info
+  PS1=''
+  for segment in $POWERLINE_PROMPT; do
+    info=''
+    if command -v "__powerline_${{segment}}_prompt" >/dev/null 2>&1; then
+      info="$("__powerline_${{segment}}_prompt")" || true
+    fi
+    [ -n "$info" ] && PS1="${{PS1}}${{info}} "
+  done
+}}
+_omb_util_add_prompt_command _omb_theme_PROMPT_COMMAND
+PACKAGENT_ACTIVE_ENV=base
+{hook}
+{hook}
+[ "$POWERLINE_PROMPT" = 'user_info scm packagent cwd' ]
+_omb_util_prompt_command_hook
+case "$PS1" in
+  *'[pa] base|35'*) ;;
+  *) echo "missing packagent segment: $PS1" >&2; exit 1 ;;
+esac
+case "$PS1" in
+  "(base) "*) echo "unexpected fallback prefix: $PS1" >&2; exit 1 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_zsh_shell_init_contains_wrapper_and_precmd_hook() -> None:
     script = render_shell_init("zsh")
     assert 'packagent() {' in script
-    assert "precmd_functions+=(_packagent_refresh_prompt)" in script
+    assert "add-zsh-hook precmd _packagent_prompt_command" in script
+    assert "precmd_functions+=(_packagent_prompt_command)" in script
+    assert "packagent_prompt_info()" in script
     assert 'PACKAGENT_SHELL=zsh' in script
 
 

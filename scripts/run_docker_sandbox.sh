@@ -18,6 +18,10 @@ Environment:
   PACKAGENT_DOCKER_COPY_HOST_CONFIGS Set to 0 to skip host config copy (default: 1)
   PACKAGENT_DOCKER_CODEX_SOURCE      Override Codex source dir (default: CODEX_HOME or ~/.codex)
   PACKAGENT_DOCKER_CLAUDE_SOURCE     Override Claude source dir (default: CLAUDE_CONFIG_DIR or ~/.claude)
+  PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS
+                                     Set to 1 to run optional real Oh My Bash / Oh My Zsh prompt tests.
+  PACKAGENT_DOCKER_OMB_SOURCE        Override Oh My Bash source dir for optional tests (default: ~/.oh-my-bash)
+  PACKAGENT_DOCKER_OMZ_SOURCE        Override Oh My Zsh source dir for optional tests (default: ~/.oh-my-zsh)
 EOF
 }
 
@@ -111,6 +115,11 @@ main() {
       -e "PACKAGENT_DOCKER_EXPECT_CLAUDE_SEED_FILE=${PACKAGENT_DOCKER_EXPECT_CLAUDE_SEED_FILE}"
     )
   fi
+  if [ -n "${PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS:-}" ]; then
+    docker_args+=(
+      -e "PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS=${PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS}"
+    )
+  fi
 
   if [ "${PACKAGENT_DOCKER_COPY_HOST_CONFIGS:-1}" != "0" ]; then
     local codex_source="${PACKAGENT_DOCKER_CODEX_SOURCE:-${CODEX_HOME:-$HOME/.codex}}"
@@ -119,6 +128,13 @@ main() {
     add_host_config_mount "Claude config" "$claude_source" "/tmp/packagent-host-config/claude"
   else
     echo "== host config copy disabled =="
+  fi
+
+  if [ "${PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS:-0}" != "0" ]; then
+    local omb_source="${PACKAGENT_DOCKER_OMB_SOURCE:-$HOME/.oh-my-bash}"
+    local omz_source="${PACKAGENT_DOCKER_OMZ_SOURCE:-$HOME/.oh-my-zsh}"
+    add_host_config_mount "Oh My Bash" "$omb_source" "/tmp/packagent-host-config/oh-my-bash"
+    add_host_config_mount "Oh My Zsh" "$omz_source" "/tmp/packagent-host-config/oh-my-zsh"
   fi
 
   if [ "$mode" = "test" ]; then
