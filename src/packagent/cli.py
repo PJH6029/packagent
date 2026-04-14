@@ -80,9 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "deactivate":
             return _handle_deactivate(manager)
         if args.command == "list":
-            rows = manager.list_envs()
-            for row in rows:
-                print(f"{row['active']}\t{row['name']}\t{row['path']}")
+            _print_env_list(manager.list_envs())
             return 0
         if args.command == "status":
             _print_status(manager.status())
@@ -132,14 +130,17 @@ def _handle_init(
     activation = manager.initialize_base(base_mode)
     target = Path(rc_file).expanduser() if rc_file else default_rc_path(shell_name, manager.paths.home)
     result = install_shell_init(shell_name, target)
-    print(
-        f"initialized\t{result.shell_name}\t{result.rc_path}\t"
-        f"{'updated' if result.changed else 'unchanged'}",
-    )
-    print(f"base_mode\t{base_mode}")
-    print(f"active_env\t{activation.env_name}")
-    print(f"run_now\teval \"$(packagent shell init {shell_name})\"")
-    print(f"reload\tsource {shlex.quote(result.rc_path)}")
+    rc_status = "updated" if result.changed else "unchanged"
+    print("==== Initializing packagent ====")
+    print(f"shell: {result.shell_name}")
+    print(f"rc_file: {result.rc_path} ({rc_status})")
+    print(f"base_mode: {base_mode}")
+    print(f"active_env: {activation.env_name}")
+    print("==== Ready ====")
+    print("Run this in your current shell:")
+    print(f"  source {shlex.quote(result.rc_path)}")
+    print("Or bootstrap just this shell:")
+    print(f"  eval \"$(packagent shell init {shell_name})\"")
     return 0
 
 
@@ -176,18 +177,23 @@ def _current_shell() -> str:
     return detect_shell()
 
 
+def _print_env_list(rows: list[dict[str, str]]) -> None:
+    print("active\tname\tpath")
+    for row in rows:
+        print(f"{row['active']}\t{row['name']}\t{row['path']}")
+
+
 def _print_status(status: StatusReport) -> None:
     print(f"active_env={status.active_env}")
     print(f"managed={str(status.managed).lower()}")
     print(f"managed_home={status.managed_home_path}")
     print(f"home_kind={status.home_kind}")
-    print(f"home_target={status.home_target or ''}")
-    print(f"expected_target={status.expected_target}")
+    print()
+    print("target\tmanaged\tmanaged_home\thome_kind\thome_target\texpected_target")
     for target_status in status.target_statuses:
         print(
             "\t".join(
                 [
-                    "target",
                     target_status.key,
                     str(target_status.managed).lower(),
                     target_status.managed_home_path,

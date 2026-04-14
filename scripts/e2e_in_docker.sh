@@ -88,7 +88,11 @@ EOF
 
   echo "== install shell integration =="
   packagent init --shell bash >/tmp/packagent-init.txt
-  grep -q $'initialized\tbash\t' /tmp/packagent-init.txt || fail "packagent init did not report bash setup"
+  grep -q '==== Initializing packagent ====' /tmp/packagent-init.txt || fail "packagent init did not report init header"
+  grep -q 'shell: bash' /tmp/packagent-init.txt || fail "packagent init did not report shell"
+  grep -q 'base_mode: import' /tmp/packagent-init.txt || fail "packagent init did not report import base mode"
+  grep -q 'active_env: base' /tmp/packagent-init.txt || fail "packagent init did not report active base env"
+  grep -q 'source /home/tester/.bashrc' /tmp/packagent-init.txt || fail "packagent init did not report source command"
   grep -q 'eval "$(packagent shell init bash)"' "$HOME/.bashrc" || fail "bashrc was not updated by packagent init"
   echo "== verify bash rc can be sourced repeatedly =="
   bash --rcfile "$HOME/.bashrc" -i -c \
@@ -224,7 +228,7 @@ EOF
 {"claude_auth": "fresh-backup-only"}
 EOF
   HOME="$fresh_home" packagent init --shell bash --base-mode fresh --rc-file "$fresh_home/.bashrc" >/tmp/packagent-fresh-init.txt
-  grep -q $'base_mode\tfresh' /tmp/packagent-fresh-init.txt || fail "packagent init did not report fresh base mode"
+  grep -q 'base_mode: fresh' /tmp/packagent-fresh-init.txt || fail "packagent init did not report fresh base mode"
   assert_symlink_target "$fresh_home/.codex" "$fresh_home/.packagent/envs/base/.codex"
   assert_symlink_target "$fresh_home/.claude" "$fresh_home/.packagent/envs/base/.claude"
   assert_path_missing "$fresh_home/.packagent/envs/base/.codex/auth.json"

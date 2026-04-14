@@ -586,10 +586,13 @@ def test_cli_init_writes_detected_shell_rc_file(
     assert exit_code == 0
     assert rc_path.exists()
     assert 'eval "$(packagent shell init bash)"' in rc_path.read_text(encoding="utf-8")
-    assert f"initialized\tbash\t{rc_path}\tupdated" in output
-    assert "base_mode\timport" in output
-    assert "active_env\tbase" in output
-    assert 'run_now\teval "$(packagent shell init bash)"' in output
+    assert "==== Initializing packagent ====" in output
+    assert "shell: bash" in output
+    assert f"rc_file: {rc_path} (updated)" in output
+    assert "base_mode: import" in output
+    assert "active_env: base" in output
+    assert f"source {rc_path}" in output
+    assert 'eval "$(packagent shell init bash)"' in output
 
 
 def test_cli_init_can_target_explicit_rc_file(
@@ -603,7 +606,8 @@ def test_cli_init_can_target_explicit_rc_file(
 
     assert exit_code == 0
     assert 'eval "$(packagent shell init zsh)"' in rc_path.read_text(encoding="utf-8")
-    assert f"initialized\tzsh\t{rc_path}\tupdated" in output
+    assert "shell: zsh" in output
+    assert f"rc_file: {rc_path} (updated)" in output
 
 
 def test_cli_init_base_mode_fresh_creates_bare_base(
@@ -618,7 +622,7 @@ def test_cli_init_base_mode_fresh_creates_bare_base(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "base_mode\tfresh" in output
+    assert "base_mode: fresh" in output
     assert codex_home.is_symlink()
     assert not manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").exists()
     assert any(path.name == "auth.json" for path in manager.paths.backups_root.rglob("*"))
@@ -642,7 +646,7 @@ def test_cli_init_interactive_prompt_can_choose_fresh(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "base_mode\tfresh" in captured.out
+    assert "base_mode: fresh" in captured.out
     assert "Base mode" in captured.err
     assert not manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").exists()
 
@@ -659,7 +663,7 @@ def test_cli_init_noninteractive_defaults_to_import(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "base_mode\timport" in output
+    assert "base_mode: import" in output
     assert manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
 
 
@@ -682,18 +686,25 @@ def test_cli_deactivate_emits_base_activation_commands(
     assert "export CLAUDE_CONFIG_DIR=" not in output
 
 
-def test_cli_list_and_status_are_script_friendly(manager: PackagentManager, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_list_and_status_include_table_headers(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     manager.create_env("work")
 
     list_code = main(["list"])
     list_output = capsys.readouterr().out
     assert list_code == 0
+    assert list_output.splitlines()[0] == "active\tname\tpath"
     assert "false\twork\t" in list_output
 
     status_code = main(["status"])
     status_output = capsys.readouterr().out
     assert status_code == 0
     assert "active_env=base" in status_output
-    assert "target\tcodex-home\t" in status_output
-    assert "target\tagents-home\t" in status_output
-    assert "target\tclaude-home\t" in status_output
+    assert "home_target=" not in status_output
+    assert "expected_target=" not in status_output
+    assert "target\tmanaged\tmanaged_home\thome_kind\thome_target\texpected_target" in status_output
+    assert "codex-home\t" in status_output
+    assert "agents-home\t" in status_output
+    assert "claude-home\t" in status_output
