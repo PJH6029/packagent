@@ -78,6 +78,7 @@ These instructions apply to the entire repository.
 
 - Prefer Python for project work. Do not introduce Node/TS for the manager
   itself unless the user explicitly asks for a language shift.
+- Prefer `uv` for package manager.
 - Keep code compatible with Python 3.9+.
 - Update docs when changing user-facing commands or guarantees:
   - `README.md` for usage and CLI behavior
