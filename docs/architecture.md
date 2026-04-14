@@ -24,6 +24,7 @@ State lives in `~/.packagent/state.json` and records:
 
 - active environment
 - known environments
+- init base mode, when recorded by current versions
 - backup history from first-run takeover
 - managed target metadata
 
@@ -55,6 +56,22 @@ always `base`.
 not import the backed-up files into `base`. Interactive `init` prompts for the
 base mode when unmanaged homes exist; non-interactive `init` defaults to
 `import` for compatibility.
+
+## Uninstall rollback
+
+`packagent uninstall` is the inverse of user-level home takeover, not package
+removal. It verifies every managed target is still the expected packagent
+symlink for the recorded active env before changing anything. If a target has
+drifted to an unmanaged path or a different managed env, uninstall refuses and
+asks the user to repair or handle the drift first.
+
+For import-mode installs, uninstall can restore either the copied `base` env or
+the original backup snapshots. Interactive shells prompt for that choice;
+non-interactive shells must pass `--restore-source base` or
+`--restore-source backup`. For fresh-mode installs, uninstall always restores
+backup snapshots. Targets that had no first-run backup are left absent in
+backup mode. The command removes packagent's managed shell rc block but keeps
+`~/.packagent` as recoverable data.
 
 ## Environment creation
 

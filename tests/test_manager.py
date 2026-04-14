@@ -402,6 +402,112 @@ def test_initialize_base_fresh_backs_up_existing_targets_without_importing(
     assert any(path.name == "auth.json" for path in manager.paths.backups_root.rglob("*"))
     assert any(path.name == ".credentials.json" for path in manager.paths.backups_root.rglob("*"))
     assert {record.reason for record in manager.load_state().backups} == {"fresh_base_directory"}
+    assert manager.load_state().init_base_mode == "fresh"
+
+
+def test_uninstall_import_mode_can_restore_from_base(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    claude_target = manager.host.target_by_key("claude-home")
+    codex_home = manager.host.managed_home_path(manager.paths)
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    claude_home = manager.host.managed_target_path(manager.paths, claude_target)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    agents_home.joinpath("skills").mkdir(parents=True)
+    agents_home.joinpath("skills", "demo.txt").write_text("agents-original", encoding="utf-8")
+    claude_home.mkdir()
+    claude_home.joinpath("settings.json").write_text("claude-original", encoding="utf-8")
+
+    manager.initialize_base("import")
+    manager.host.env_home_path(manager.paths, "base").joinpath("base-only.txt").write_text("base", encoding="utf-8")
+
+    result = manager.uninstall("base")
+
+    assert result.restore_source == "base"
+    assert not codex_home.is_symlink()
+    assert not agents_home.is_symlink()
+    assert not claude_home.is_symlink()
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+    assert codex_home.joinpath("base-only.txt").read_text(encoding="utf-8") == "base"
+    assert agents_home.joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "agents-original"
+    assert claude_home.joinpath("settings.json").read_text(encoding="utf-8") == "claude-original"
+    assert manager.paths.root.exists()
+    assert manager.load_state().last_link_target is None
+
+
+def test_uninstall_import_mode_can_restore_from_backup(manager: PackagentManager) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    manager.initialize_base("import")
+    manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").write_text("base-copy", encoding="utf-8")
+
+    result = manager.uninstall("backup")
+
+    assert result.restore_source == "backup"
+    assert not codex_home.is_symlink()
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+
+
+def test_uninstall_fresh_mode_restores_backup_by_default(manager: PackagentManager) -> None:
+    claude_target = manager.host.target_by_key("claude-home")
+    codex_home = manager.host.managed_home_path(manager.paths)
+    claude_home = manager.host.managed_target_path(manager.paths, claude_target)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    claude_home.mkdir()
+    claude_home.joinpath(".credentials.json").write_text("claude-original", encoding="utf-8")
+    manager.initialize_base("fresh")
+
+    result = manager.uninstall()
+
+    assert result.restore_source == "backup"
+    assert not codex_home.is_symlink()
+    assert not claude_home.is_symlink()
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+    assert claude_home.joinpath(".credentials.json").read_text(encoding="utf-8") == "claude-original"
+
+
+def test_uninstall_fresh_mode_rejects_base_restore(manager: PackagentManager) -> None:
+    manager.initialize_base("fresh")
+
+    with pytest.raises(Exception):
+        manager.uninstall("base")
+
+
+def test_uninstall_backup_restore_leaves_originally_missing_targets_absent(
+    manager: PackagentManager,
+) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    codex_home = manager.host.managed_home_path(manager.paths)
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    manager.initialize_base("fresh")
+
+    manager.uninstall()
+
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+    assert not agents_home.exists()
+    assert not agents_home.is_symlink()
+
+
+def test_uninstall_refuses_target_drift_without_partial_restore(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    codex_home = manager.host.managed_home_path(manager.paths)
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    manager.initialize_base("import")
+    codex_home.unlink()
+    codex_home.mkdir()
+    codex_home.joinpath("unmanaged.txt").write_text("drift", encoding="utf-8")
+
+    with pytest.raises(Exception):
+        manager.uninstall("base")
+
+    assert codex_home.joinpath("unmanaged.txt").read_text(encoding="utf-8") == "drift"
+    assert agents_home.is_symlink()
 
 
 def test_doctor_detects_and_repairs_symlink_drift(manager: PackagentManager) -> None:
@@ -665,6 +771,84 @@ def test_cli_init_noninteractive_defaults_to_import(
     assert exit_code == 0
     assert "base_mode: import" in output
     assert manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
+
+
+def test_cli_uninstall_import_mode_noninteractive_requires_restore_source(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex", encoding="utf-8")
+    main(["init", "--shell", "bash"])
+    capsys.readouterr()
+
+    exit_code = main(["uninstall"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "--restore-source base or --restore-source backup" in captured.err
+    assert codex_home.is_symlink()
+
+
+def test_cli_uninstall_interactive_import_mode_can_choose_backup(
+    manager: PackagentManager,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    main(["init", "--shell", "bash"])
+    manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").write_text("base-copy", encoding="utf-8")
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "stdin", TtyInput("backup\n"))
+
+    exit_code = main(["uninstall"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "restore_source: backup" in captured.out
+    assert "Restore source" in captured.err
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+
+
+def test_cli_uninstall_restores_and_removes_managed_shell_block(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc_path = manager.paths.home / ".bashrc"
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex", encoding="utf-8")
+    main(["init", "--shell", "bash", "--rc-file", str(rc_path)])
+    assert "# >>> packagent initialize >>>" in rc_path.read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "uninstall",
+            "--restore-source",
+            "base",
+            "--shell",
+            "bash",
+            "--rc-file",
+            str(rc_path),
+        ],
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "restore_source: base" in output
+    assert "target\taction\tmanaged_home\tsource" in output
+    assert f"rc_file: {rc_path} (updated)" in output
+    assert "restart the shell" in output
+    assert not codex_home.is_symlink()
+    assert "# >>> packagent initialize >>>" not in rc_path.read_text(encoding="utf-8")
 
 
 def test_cli_deactivate_emits_base_activation_commands(

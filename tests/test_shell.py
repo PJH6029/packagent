@@ -9,6 +9,7 @@ from packagent.shell import (
     default_rc_path,
     detect_shell,
     install_shell_init,
+    remove_shell_init,
     render_activate_commands,
     render_deactivate_commands,
     render_shell_init,
@@ -21,6 +22,7 @@ def test_bash_shell_init_contains_wrapper_and_prompt_hook() -> None:
     assert 'PROMPT_COMMAND="_packagent_prompt_command"' in script
     assert "PACKAGENT_ORIGINAL_PROMPT_COMMAND" in script
     assert 'PACKAGENT_SHELL=bash' in script
+    assert '[ "$1" = "uninstall" ]' in script
 
 
 def test_bash_shell_init_is_safe_to_source_repeatedly(tmp_path: Path) -> None:
@@ -63,6 +65,51 @@ def test_zsh_shell_init_contains_wrapper_and_precmd_hook() -> None:
     assert 'packagent() {' in script
     assert "precmd_functions+=(_packagent_refresh_prompt)" in script
     assert 'PACKAGENT_SHELL=zsh' in script
+    assert '[[ "$1" == "uninstall" ]]' in script
+
+
+def test_bash_uninstall_wrapper_clears_current_prompt_state(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    executable = bin_dir / "packagent"
+    executable.write_text(
+        "#!/usr/bin/env bash\nprintf 'uninstalled\\n'\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    script_path = tmp_path / "uninstall-wrapper.bash"
+    output_path = tmp_path / "uninstall-output.txt"
+    hook = render_shell_init("bash")
+    script_path.write_text(
+        f"""
+set -euo pipefail
+export PATH={shlex.quote(str(bin_dir))}:$PATH
+PS1='prompt$ '
+{hook}
+PACKAGENT_ACTIVE_ENV=base
+_packagent_refresh_prompt
+case "$PS1" in
+  "(base) "*) ;;
+  *) echo "prompt was not prefixed before uninstall: $PS1" >&2; exit 1 ;;
+esac
+packagent uninstall --restore-source base > {shlex.quote(str(output_path))}
+[ -z "${{PACKAGENT_ACTIVE_ENV-}}" ]
+case "$PS1" in
+  "(base) "*) echo "prompt prefix remained after uninstall: $PS1" >&2; exit 1 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output_path.read_text(encoding="utf-8") == "uninstalled\n"
 
 
 def test_detect_shell_prefers_process_tree_over_login_shell(monkeypatch) -> None:
@@ -98,6 +145,22 @@ def test_install_shell_init_writes_managed_block_idempotently(tmp_path: Path) ->
     assert second.changed is False
     assert content.count("# >>> packagent initialize >>>") == 1
     assert 'eval "$(packagent shell init bash)"' in content
+
+
+def test_remove_shell_init_removes_managed_block_idempotently(tmp_path: Path) -> None:
+    rc_path = tmp_path / ".bashrc"
+    install_shell_init("bash", rc_path)
+    with_existing_content = "export PATH=/tmp/bin:$PATH\n\n" + rc_path.read_text(encoding="utf-8")
+    rc_path.write_text(with_existing_content, encoding="utf-8")
+
+    first = remove_shell_init("bash", rc_path)
+    second = remove_shell_init("bash", rc_path)
+    content = rc_path.read_text(encoding="utf-8")
+
+    assert first.changed is True
+    assert second.changed is False
+    assert "# >>> packagent initialize >>>" not in content
+    assert "export PATH=/tmp/bin:$PATH" in content
 
 
 def test_shell_init_can_bootstrap_the_current_env() -> None:
