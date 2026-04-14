@@ -1,18 +1,19 @@
 # packagent
 
-`packagent` is a small Python CLI that isolates user-level Codex homes under
-`~/.packagent-v1/envs/<env>/.codex` and switches the active managed Codex home
-path with a symlink. The goal is compatibility with harnesses that still assume
-a single Codex home, while keeping those harness-specific files separated by
-environment.
+`packagent` is a small Python CLI that isolates user-level Codex packaging
+targets under `~/.packagent-v1/envs/<env>/` and switches the active managed
+targets with symlinks. Each environment contains `.codex` and `.agents`, so
+Codex configuration and user-level agent skills or harness files stay separated
+by environment.
 
 If `CODEX_HOME` is already set in your shell, `packagent` uses that path as the
 managed Codex home instead of `~/.codex`. It does not export or rewrite
-`CODEX_HOME` for you.
+`CODEX_HOME` for you, and `~/.agents` remains the managed user-level agents
+target.
 
 ## Why this exists
 
-Agent harnesses often install into the Codex home directly:
+Agent harnesses often install into the Codex user layer:
 
 - `AGENTS.md`
 - `skills/`
@@ -20,12 +21,14 @@ Agent harnesses often install into the Codex home directly:
 - hooks
 - MCP configuration
 - other host-specific files
+- user-level skills and workflow files under `~/.agents`
 
 When multiple harnesses share the same user home, their files can leak across
-sessions. `packagent` gives you a conda-like workflow for the Codex home layer.
+sessions. `packagent` gives you a conda-like workflow for the Codex user-level
+packaging layer.
 
 It does not try to replace Codex, install harnesses for you, or isolate
-repo-local `.codex/` files inside trusted projects.
+repo-local `.codex/` or `.agents/` files inside trusted projects.
 
 ## Install
 
@@ -74,9 +77,10 @@ omx setup
 ```
 
 All writes to the managed Codex home path land inside the active environment's
-`~/.packagent-v1/envs/codex-with-omx/.codex`. By default that managed path is
-`~/.codex`, but if you already export `CODEX_HOME`, `packagent` will manage
-that path instead.
+`~/.packagent-v1/envs/codex-with-omx/.codex`. Writes under `~/.agents` land
+inside `~/.packagent-v1/envs/codex-with-omx/.agents`. By default the managed
+Codex home path is `~/.codex`, but if you already export `CODEX_HOME`,
+`packagent` will manage that Codex path instead.
 
 Return to the default base environment:
 
@@ -105,17 +109,21 @@ prompt state.
 
 `packagent` v1:
 
-- manages a single global active Codex home path
-- respects a pre-set `CODEX_HOME` path instead of exporting one itself
+- manages a single global active Codex environment
+- switches the Codex user-level targets `~/.codex` and `~/.agents` together
+- respects a pre-set `CODEX_HOME` path for the Codex home target instead of
+  exporting one itself
 - keeps a permanent `base` environment
-- backs up an existing unmanaged home path on first takeover
+- backs up existing unmanaged target paths on first takeover
 - is designed for macOS and Linux only
 
 `packagent` v1 does not:
 
 - install Codex or harness packages
 - isolate trusted repo-local `.codex/config.toml` layers
+- isolate trusted repo-local `.agents/skills` layers
 - isolate repo/system instruction files that Codex also loads
+- manage non-Codex homes such as `~/.claude`, `~/.claude.json`, or `~/.gemini`
 - support different active environments in different terminals at the same time
 
 ## Development
@@ -158,9 +166,9 @@ That flow exercises:
 
 - installing `packagent` with `uv tool install`
 - installing shell integration with `packagent init`
-- first-run takeover of an unmanaged Codex home path
+- first-run takeover of unmanaged Codex user-level target paths
 - creating and activating environments
-- writing harness-like files into the active managed home path
+- writing harness-like files into the active managed target paths
 - switching envs and verifying isolation
 - `doctor --fix`
 - deactivation
@@ -199,8 +207,8 @@ OPENAI_API_KEY=... ./scripts/run_docker_sandbox.sh shell
 Notes:
 
 - The Docker sandbox is for safe user-home testing. It does not isolate
-  repo-local trusted `.codex/` layers inside mounted projects, just like normal
-  `packagent` behavior.
+  repo-local trusted `.codex/` or `.agents/` layers inside mounted projects,
+  just like normal `packagent` behavior.
 - This repo's current workspace does not include Docker, so the shell scripts
   are provided and syntax-checked here, but the image build itself must be run
   on a machine with Docker installed.

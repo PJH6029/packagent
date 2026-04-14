@@ -36,12 +36,16 @@ main() {
   codex --version || true
 
   echo "== clean previous state =="
-  rm -rf "$HOME/.packagent-v1" "$HOME/.codex"
+  rm -rf "$HOME/.packagent-v1" "$HOME/.codex" "$HOME/.agents"
 
-  echo "== seed unmanaged Codex home =="
+  echo "== seed unmanaged Codex user-level targets =="
   mkdir -p "$HOME/.codex"
   cat > "$HOME/.codex/AGENTS.md" <<'EOF'
 Legacy AGENTS content
+EOF
+  mkdir -p "$HOME/.agents/skills/legacy-skill"
+  cat > "$HOME/.agents/skills/legacy-skill/SKILL.md" <<'EOF'
+Legacy skill content
 EOF
 
   echo "== install packagent via uv tool =="
@@ -64,12 +68,18 @@ EOF
 
   local root="$HOME/.packagent-v1"
   local base_home="$root/envs/base/.codex"
+  local base_agents="$root/envs/base/.agents"
   local demo_home="$root/envs/codex-with-demo/.codex"
+  local demo_agents="$root/envs/codex-with-demo/.agents"
   local second_home="$root/envs/second/.codex"
+  local second_agents="$root/envs/second/.agents"
 
   assert_symlink_target "$HOME/.codex" "$demo_home"
+  assert_symlink_target "$HOME/.agents" "$demo_agents"
   assert_path_exists "$base_home/AGENTS.md"
+  assert_path_exists "$base_agents/skills/legacy-skill/SKILL.md"
   grep -q "Legacy AGENTS content" "$base_home/AGENTS.md" || fail "base env did not import legacy home"
+  grep -q "Legacy skill content" "$base_agents/skills/legacy-skill/SKILL.md" || fail "base env did not import legacy agents home"
 
   echo "== verify npm global installs work for the sandbox user =="
   [ "$(npm config get prefix)" = "$HOME/.local" ] || fail "npm global prefix is not user-local"
@@ -79,7 +89,7 @@ EOF
   }
   command -v omx >/dev/null || fail "omx was not installed into the sandbox user's PATH"
 
-  echo "== simulate harness writing into active home =="
+  echo "== simulate harness writing into active targets =="
   mkdir -p "$HOME/.codex/skills/demo-skill"
   cat > "$HOME/.codex/skills/demo-skill/SKILL.md" <<'EOF'
 ---
@@ -88,31 +98,47 @@ description: demo skill
 ---
 demo
 EOF
+  mkdir -p "$HOME/.agents/skills/user-skill"
+  cat > "$HOME/.agents/skills/user-skill/SKILL.md" <<'EOF'
+---
+name: user-skill
+description: user skill
+---
+user
+EOF
   cat > "$HOME/.codex/AGENTS.md" <<'EOF'
 Active env AGENTS content
 EOF
 
   assert_path_exists "$demo_home/skills/demo-skill/SKILL.md"
+  assert_path_exists "$demo_agents/skills/user-skill/SKILL.md"
 
   echo "== create second env and verify isolation =="
   packagent create -n second
   packagent activate second
   assert_symlink_target "$HOME/.codex" "$second_home"
+  assert_symlink_target "$HOME/.agents" "$second_agents"
   assert_path_missing "$HOME/.codex/skills/demo-skill/SKILL.md"
+  assert_path_missing "$HOME/.agents/skills/user-skill/SKILL.md"
 
   echo "== force doctor repair path =="
   rm -f "$HOME/.codex"
   ln -s "$base_home" "$HOME/.codex"
+  rm -f "$HOME/.agents"
+  ln -s "$base_agents" "$HOME/.agents"
   if packagent doctor >/tmp/packagent-doctor-before.txt 2>&1; then
     fail "doctor should have reported drift before repair"
   fi
   packagent doctor --fix >/tmp/packagent-doctor-after.txt
   assert_symlink_target "$HOME/.codex" "$second_home"
+  assert_symlink_target "$HOME/.agents" "$second_agents"
 
   echo "== deactivate back to base =="
   packagent deactivate
   assert_symlink_target "$HOME/.codex" "$base_home"
+  assert_symlink_target "$HOME/.agents" "$base_agents"
   grep -q "Legacy AGENTS content" "$HOME/.codex/AGENTS.md" || fail "base env was not restored on deactivate"
+  grep -q "Legacy skill content" "$HOME/.agents/skills/legacy-skill/SKILL.md" || fail "base agents env was not restored on deactivate"
 
   echo "== remove non-active env and uninstall packagent =="
   packagent remove codex-with-demo

@@ -51,6 +51,24 @@ class BackupRecord:
 
 
 @dataclass
+class ManagedTargetState:
+    key: str
+    managed_home_path: str
+    last_link_target: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, object]) -> "ManagedTargetState":
+        return cls(
+            key=str(data["key"]),
+            managed_home_path=str(data["managed_home_path"]),
+            last_link_target=str(data["last_link_target"]) if data.get("last_link_target") else None,
+        )
+
+    def to_dict(self) -> Dict[str, object]:
+        return asdict(self)
+
+
+@dataclass
 class PackagentState:
     schema_version: int
     host: str
@@ -62,6 +80,7 @@ class PackagentState:
     last_link_target: Optional[str] = None
     envs: Dict[str, EnvMetadata] = field(default_factory=dict)
     backups: List[BackupRecord] = field(default_factory=list)
+    managed_targets: Dict[str, ManagedTargetState] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "PackagentState":
@@ -73,6 +92,10 @@ class PackagentState:
             BackupRecord.from_dict(value)
             for value in list(data.get("backups", []))
         ]
+        managed_targets = {
+            name: ManagedTargetState.from_dict(value)
+            for name, value in dict(data.get("managed_targets", {})).items()
+        }
         return cls(
             schema_version=int(data["schema_version"]),
             host=str(data["host"]),
@@ -84,12 +107,16 @@ class PackagentState:
             last_link_target=str(data["last_link_target"]) if data.get("last_link_target") else None,
             envs=envs,
             backups=backups,
+            managed_targets=managed_targets,
         )
 
     def to_dict(self) -> Dict[str, object]:
         payload = asdict(self)
         payload["envs"] = {name: metadata.to_dict() for name, metadata in self.envs.items()}
         payload["backups"] = [record.to_dict() for record in self.backups]
+        payload["managed_targets"] = {
+            name: target.to_dict() for name, target in self.managed_targets.items()
+        }
         return payload
 
 
@@ -98,6 +125,17 @@ class ActivationResult:
     env_name: str
     managed_home_path: str
     codex_home: str
+    target_homes: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class TargetStatusReport:
+    key: str
+    managed: bool
+    managed_home_path: str
+    home_kind: str
+    home_target: Optional[str]
+    expected_target: str
 
 
 @dataclass
@@ -108,6 +146,7 @@ class StatusReport:
     home_kind: str
     home_target: Optional[str]
     expected_target: str
+    target_statuses: List[TargetStatusReport] = field(default_factory=list)
 
 
 @dataclass
@@ -115,4 +154,3 @@ class DoctorReport:
     status: StatusReport
     issues: List[str] = field(default_factory=list)
     repaired: List[str] = field(default_factory=list)
-

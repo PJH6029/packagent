@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from packagent.models import BackupRecord, EnvMetadata, PackagentState
+from packagent.models import BackupRecord, EnvMetadata, ManagedTargetState, PackagentState
 from packagent.validation import validate_env_name
 
 
@@ -19,7 +19,7 @@ def test_validate_env_name_rejects_invalid_names(name: str) -> None:
 
 def test_state_serialization_round_trip() -> None:
     state = PackagentState(
-        schema_version=1,
+        schema_version=2,
         host="codex",
         base_env="base",
         active_env="work",
@@ -50,9 +50,20 @@ def test_state_serialization_round_trip() -> None:
                 original_home="/tmp/home/.codex",
             ),
         ],
+        managed_targets={
+            "codex-home": ManagedTargetState(
+                key="codex-home",
+                managed_home_path="/tmp/home/.codex",
+                last_link_target="/tmp/home/.packagent-v1/envs/work/.codex",
+            ),
+            "agents-home": ManagedTargetState(
+                key="agents-home",
+                managed_home_path="/tmp/home/.agents",
+                last_link_target="/tmp/home/.packagent-v1/envs/work/.agents",
+            ),
+        },
     )
 
     round_tripped = PackagentState.from_dict(state.to_dict())
 
     assert round_tripped == state
-

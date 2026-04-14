@@ -153,6 +153,20 @@ def _print_status(status: StatusReport) -> None:
     print(f"home_kind={status.home_kind}")
     print(f"home_target={status.home_target or ''}")
     print(f"expected_target={status.expected_target}")
+    for target_status in status.target_statuses:
+        print(
+            "\t".join(
+                [
+                    "target",
+                    target_status.key,
+                    str(target_status.managed).lower(),
+                    target_status.managed_home_path,
+                    target_status.home_kind,
+                    target_status.home_target or "",
+                    target_status.expected_target,
+                ],
+            ),
+        )
 
 
 def _print_doctor(report: DoctorReport) -> None:

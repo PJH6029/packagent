@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import os
 
@@ -7,6 +8,7 @@ import pytest
 
 from packagent.activation import (
     GlobalSymlinkBackend,
+    HOME_KIND_BROKEN_MANAGED,
     HOME_KIND_MANAGED,
     HOME_KIND_MISSING,
     HOME_KIND_UNMANAGED_DIRECTORY,
@@ -32,6 +34,22 @@ def test_home_inspection_detects_missing_directory_and_managed_symlink(manager: 
     manager.create_env("work")
     manager.activate_env("work")
     inspection = backend.inspect(manager.paths, CodexHost())
+    assert inspection.kind == HOME_KIND_MANAGED
+    assert inspection.managed_env == "work"
+
+
+def test_agents_target_inspection_detects_managed_symlink(manager: PackagentManager) -> None:
+    backend = GlobalSymlinkBackend()
+    host = CodexHost()
+    target = host.target_by_key("agents-home")
+
+    inspection = backend.inspect(manager.paths, host, target)
+    assert inspection.kind == HOME_KIND_MISSING
+
+    manager.create_env("work")
+    manager.activate_env("work")
+    inspection = backend.inspect(manager.paths, host, target)
+
     assert inspection.kind == HOME_KIND_MANAGED
     assert inspection.managed_env == "work"
 
@@ -80,6 +98,23 @@ def test_first_activation_imports_existing_home_into_base_and_replaces_link(mana
     assert backups
 
 
+def test_first_activation_imports_existing_agents_home_into_base_and_replaces_link(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    legacy_agents = manager.host.managed_target_path(manager.paths, agents_target)
+    legacy_agents.mkdir(parents=True)
+    (legacy_agents / "skills" / "demo").mkdir(parents=True)
+    (legacy_agents / "skills" / "demo" / "SKILL.md").write_text("legacy-skill", encoding="utf-8")
+
+    manager.create_env("work")
+    manager.activate_env("work")
+
+    base_agents = manager.host.env_target_path(manager.paths, "base", agents_target)
+    work_agents = manager.host.env_target_path(manager.paths, "work", agents_target)
+    assert legacy_agents.is_symlink()
+    assert legacy_agents.resolve() == work_agents
+    assert base_agents.joinpath("skills", "demo", "SKILL.md").read_text(encoding="utf-8") == "legacy-skill"
+
+
 def test_activation_keeps_env_writes_isolated(manager: PackagentManager) -> None:
     manager.create_env("env-a")
     manager.create_env("env-b")
@@ -95,6 +130,28 @@ def test_activation_keeps_env_writes_isolated(manager: PackagentManager) -> None
     assert manager.host.env_home_path(manager.paths, "env-a").joinpath("AGENTS.md").read_text(encoding="utf-8") == "from-a"
     assert not manager.host.env_home_path(manager.paths, "env-b").joinpath("AGENTS.md").exists()
     assert manager.host.managed_home_path(manager.paths).resolve() == manager.host.env_home_path(manager.paths, "env-b")
+
+
+def test_activation_keeps_codex_and_agents_writes_isolated(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    manager.create_env("env-a")
+    manager.create_env("env-b")
+
+    manager.activate_env("env-a")
+    codex_home = manager.host.managed_home_path(manager.paths)
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    codex_home.joinpath("AGENTS.md").write_text("from-a", encoding="utf-8")
+    agents_home.joinpath("skills").mkdir()
+    agents_home.joinpath("skills", "demo.txt").write_text("skill-a", encoding="utf-8")
+
+    manager.activate_env("env-b")
+
+    assert manager.host.env_home_path(manager.paths, "env-a").joinpath("AGENTS.md").read_text(encoding="utf-8") == "from-a"
+    assert manager.host.env_target_path(manager.paths, "env-a", agents_target).joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "skill-a"
+    assert not manager.host.env_home_path(manager.paths, "env-b").joinpath("AGENTS.md").exists()
+    assert not manager.host.env_target_path(manager.paths, "env-b", agents_target).joinpath("skills", "demo.txt").exists()
+    assert codex_home.resolve() == manager.host.env_home_path(manager.paths, "env-b")
+    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-b", agents_target)
 
 
 def test_deactivate_restores_base(manager: PackagentManager) -> None:
@@ -121,6 +178,20 @@ def test_activation_uses_existing_codex_home_path(manager: PackagentManager, mon
     assert custom_home.resolve() == manager.host.env_home_path(manager.paths, "work")
 
 
+def test_custom_codex_home_does_not_move_agents_home(manager: PackagentManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    custom_home = manager.paths.home / ".config" / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(custom_home))
+    agents_target = manager.host.target_by_key("agents-home")
+
+    manager.create_env("work")
+    manager.activate_env("work")
+
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    assert agents_home == manager.paths.home / ".agents"
+    assert agents_home.is_symlink()
+    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "work", agents_target)
+
+
 def test_create_clone_base_copies_home_contents(manager: PackagentManager) -> None:
     manager.status()
     base_home = manager.host.env_home_path(manager.paths, "base")
@@ -130,6 +201,20 @@ def test_create_clone_base_copies_home_contents(manager: PackagentManager) -> No
 
     cloned = manager.host.env_home_path(manager.paths, "copy-base")
     assert cloned.joinpath("auth.json").read_text(encoding="utf-8") == '{"token":"demo"}'
+
+
+def test_create_clone_base_copies_all_target_contents(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    manager.status()
+    manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").write_text("codex", encoding="utf-8")
+    base_agents = manager.host.env_target_path(manager.paths, "base", agents_target)
+    base_agents.joinpath("skills").mkdir()
+    base_agents.joinpath("skills", "demo.txt").write_text("agents", encoding="utf-8")
+
+    manager.create_env("copy-base", clone_from="base")
+
+    assert manager.host.env_home_path(manager.paths, "copy-base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
+    assert manager.host.env_target_path(manager.paths, "copy-base", agents_target).joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "agents"
 
 
 def test_doctor_detects_and_repairs_symlink_drift(manager: PackagentManager) -> None:
@@ -146,6 +231,103 @@ def test_doctor_detects_and_repairs_symlink_drift(manager: PackagentManager) -> 
     fixed = manager.doctor(fix=True)
     assert not fixed.issues
     assert home.resolve() == manager.host.env_home_path(manager.paths, "env-a")
+
+
+def test_doctor_detects_and_repairs_agents_symlink_drift(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    manager.create_env("env-a")
+    manager.activate_env("env-a")
+
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    agents_home.unlink()
+    agents_home.symlink_to(manager.host.env_target_path(manager.paths, "base", agents_target))
+
+    report = manager.doctor()
+    assert any("agents-home" in issue for issue in report.issues)
+
+    fixed = manager.doctor(fix=True)
+    assert not fixed.issues
+    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-a", agents_target)
+
+
+def test_doctor_detects_and_repairs_missing_agents_symlink(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    manager.create_env("env-a")
+    manager.activate_env("env-a")
+
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    agents_home.unlink()
+
+    report = manager.doctor()
+    assert any("agents-home" in issue for issue in report.issues)
+
+    fixed = manager.doctor(fix=True)
+    assert not fixed.issues
+    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-a", agents_target)
+
+
+def test_doctor_detects_and_repairs_unmanaged_agents_directory(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    manager.create_env("env-a")
+    manager.activate_env("env-a")
+
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    agents_home.unlink()
+    agents_home.mkdir()
+    agents_home.joinpath("memory.md").write_text("legacy", encoding="utf-8")
+
+    report = manager.doctor()
+    assert any("agents-home" in issue for issue in report.issues)
+
+    fixed = manager.doctor(fix=True)
+    assert not fixed.issues
+    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-a", agents_target)
+    assert manager.host.env_target_path(manager.paths, "base", agents_target).joinpath("memory.md").read_text(encoding="utf-8") == "legacy"
+
+
+def test_doctor_detects_and_repairs_broken_agents_managed_symlink(manager: PackagentManager) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    manager.create_env("env-a")
+    manager.activate_env("env-a")
+
+    broken_target = manager.host.env_target_path(manager.paths, "missing-env", agents_target)
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    agents_home.unlink()
+    agents_home.symlink_to(broken_target)
+
+    inspection = manager.backend.inspect(manager.paths, manager.host, agents_target)
+    assert inspection.kind == HOME_KIND_BROKEN_MANAGED
+    report = manager.doctor()
+    assert any("agents-home" in issue for issue in report.issues)
+
+    fixed = manager.doctor(fix=True)
+    assert not fixed.issues
+    assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-a", agents_target)
+
+
+def test_schema_v1_state_migrates_to_managed_targets(manager: PackagentManager) -> None:
+    state = {
+        "schema_version": 1,
+        "host": "codex",
+        "base_env": "base",
+        "active_env": "base",
+        "managed_home_path": str(manager.paths.home / ".codex"),
+        "managed_root": str(manager.paths.root),
+        "manager_name": "packagent-v1",
+        "last_link_target": str(manager.paths.env_dir("base") / ".codex"),
+        "envs": {},
+        "backups": [],
+    }
+    manager.paths.root.mkdir(parents=True)
+    manager.paths.state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    manager.status()
+    migrated = manager.load_state()
+
+    assert migrated.schema_version == 2
+    assert sorted(migrated.managed_targets) == ["agents-home", "codex-home"]
+    assert migrated.managed_targets["codex-home"].last_link_target == str(manager.paths.env_dir("base") / ".codex")
+    assert manager.host.env_target_path(manager.paths, "base", manager.host.target_by_key("agents-home")).exists()
 
 
 def test_harness_style_write_and_read_follow_the_active_home(manager: PackagentManager) -> None:
@@ -247,3 +429,5 @@ def test_cli_list_and_status_are_script_friendly(manager: PackagentManager, caps
     status_output = capsys.readouterr().out
     assert status_code == 0
     assert "active_env=base" in status_output
+    assert "target\tcodex-home\t" in status_output
+    assert "target\tagents-home\t" in status_output
