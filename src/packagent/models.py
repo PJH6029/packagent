@@ -35,6 +35,7 @@ class BackupRecord:
     backup_path: str
     original_home: str
     original_target: Optional[str] = None
+    target_key: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "BackupRecord":
@@ -44,6 +45,7 @@ class BackupRecord:
             backup_path=str(data["backup_path"]),
             original_home=str(data["original_home"]),
             original_target=str(data["original_target"]) if data.get("original_target") else None,
+            target_key=str(data["target_key"]) if data.get("target_key") else None,
         )
 
     def to_dict(self) -> Dict[str, object]:
@@ -78,6 +80,7 @@ class PackagentState:
     managed_root: str
     manager_name: str = "packagent"
     last_link_target: Optional[str] = None
+    init_base_mode: Optional[str] = None
     envs: Dict[str, EnvMetadata] = field(default_factory=dict)
     backups: List[BackupRecord] = field(default_factory=list)
     managed_targets: Dict[str, ManagedTargetState] = field(default_factory=dict)
@@ -105,6 +108,7 @@ class PackagentState:
             managed_root=str(data["managed_root"]),
             manager_name=str(data.get("manager_name", "packagent")),
             last_link_target=str(data["last_link_target"]) if data.get("last_link_target") else None,
+            init_base_mode=str(data["init_base_mode"]) if data.get("init_base_mode") else None,
             envs=envs,
             backups=backups,
             managed_targets=managed_targets,
@@ -154,3 +158,18 @@ class DoctorReport:
     status: StatusReport
     issues: List[str] = field(default_factory=list)
     repaired: List[str] = field(default_factory=list)
+
+
+@dataclass
+class TargetUninstallResult:
+    key: str
+    managed_home_path: str
+    action: str
+    restore_source: str
+    source_path: Optional[str] = None
+
+
+@dataclass
+class UninstallResult:
+    restore_source: str
+    target_results: List[TargetUninstallResult] = field(default_factory=list)

@@ -426,6 +426,17 @@ EOF
   assert_path_missing "$fresh_home/.packagent/envs/base/.claude/.credentials.json"
   find "$fresh_home/.packagent/backups" -name auth.json -print -quit | grep -q . || fail "fresh mode did not back up Codex auth"
   find "$fresh_home/.packagent/backups" -name .credentials.json -print -quit | grep -q . || fail "fresh mode did not back up Claude auth"
+  HOME="$fresh_home" packagent uninstall --shell bash --rc-file "$fresh_home/.bashrc" >/tmp/packagent-fresh-uninstall.txt
+  grep -q 'restore_source: backup' /tmp/packagent-fresh-uninstall.txt || fail "fresh uninstall did not use backup restore source"
+  [ ! -L "$fresh_home/.codex" ] || fail "fresh uninstall left Codex home as a symlink"
+  [ ! -L "$fresh_home/.claude" ] || fail "fresh uninstall left Claude home as a symlink"
+  grep -q '"codex_auth": "fresh-backup-only"' "$fresh_home/.codex/auth.json" || fail "fresh uninstall did not restore Codex backup"
+  grep -q '"history": "fresh-backup-only"' "$fresh_home/.codex/history.jsonl" || fail "fresh uninstall did not restore Codex history backup"
+  grep -q '"claude_auth": "fresh-backup-only"' "$fresh_home/.claude/.credentials.json" || fail "fresh uninstall did not restore Claude backup"
+  assert_path_missing "$fresh_home/.agents"
+  if grep -q 'eval "$(packagent shell init bash)"' "$fresh_home/.bashrc"; then
+    fail "fresh uninstall did not remove shell init block"
+  fi
 
   echo "== verify zsh rc install path =="
   local zsh_home
@@ -454,6 +465,18 @@ EOF
   echo "== remove non-active env and uninstall packagent =="
   packagent remove codex-with-demo
   assert_path_missing "$root/envs/codex-with-demo"
+  packagent uninstall --restore-source base --shell bash >/tmp/packagent-uninstall.txt
+  grep -q 'restore_source: base' /tmp/packagent-uninstall.txt || fail "uninstall did not report base restore source"
+  grep -q $'target\taction\tmanaged_home\tsource' /tmp/packagent-uninstall.txt || fail "uninstall did not print target table header"
+  [ ! -L "$HOME/.codex" ] || fail "uninstall left Codex home as a symlink"
+  [ ! -L "$HOME/.agents" ] || fail "uninstall left agents home as a symlink"
+  [ ! -L "$HOME/.claude" ] || fail "uninstall left Claude home as a symlink"
+  grep -q "packagent e2e codex seed" "$HOME/.codex/packagent-e2e-codex-seed.txt" || fail "uninstall did not restore base Codex home"
+  grep -q "Legacy skill content" "$HOME/.agents/skills/legacy-skill/SKILL.md" || fail "uninstall did not restore base agents home"
+  grep -q '"packagent_e2e_claude_seed": true' "$HOME/.claude/packagent-e2e-claude-seed.json" || fail "uninstall did not restore base Claude home"
+  if grep -q 'eval "$(packagent shell init bash)"' "$HOME/.bashrc"; then
+    fail "uninstall did not remove shell init block"
+  fi
 
   uv tool uninstall packagent
   [ ! -x "$packagent_bin" ] || fail "packagent executable still exists after uninstall"

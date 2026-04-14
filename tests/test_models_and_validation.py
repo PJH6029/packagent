@@ -26,6 +26,7 @@ def test_state_serialization_round_trip() -> None:
         managed_home_path="/tmp/home/.codex",
         managed_root="/tmp/home/.packagent",
         last_link_target="/tmp/home/.packagent/envs/work/.codex",
+        init_base_mode="import",
         envs={
             "base": EnvMetadata(
                 name="base",
@@ -48,6 +49,7 @@ def test_state_serialization_round_trip() -> None:
                 reason="takeover_directory",
                 backup_path="/tmp/home/.packagent/backups/20260402T000000Z",
                 original_home="/tmp/home/.codex",
+                target_key="codex-home",
             ),
         ],
         managed_targets={

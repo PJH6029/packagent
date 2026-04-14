@@ -22,6 +22,13 @@ class ShellInitInstallResult:
     changed: bool
 
 
+@dataclass(frozen=True)
+class ShellInitRemoveResult:
+    shell_name: str
+    rc_path: str
+    changed: bool
+
+
 def detect_shell() -> str:
     for candidate in (
         os.environ.get("PACKAGENT_SHELL", ""),
@@ -56,6 +63,18 @@ def install_shell_init(shell_name: str, rc_path: Path) -> ShellInitInstallResult
     if changed or not rc_path.exists():
         rc_path.write_text(updated, encoding="utf-8")
     return ShellInitInstallResult(shell_name=shell_name, rc_path=str(rc_path), changed=changed)
+
+
+def remove_shell_init(shell_name: str, rc_path: Path) -> ShellInitRemoveResult:
+    _validate_shell(shell_name)
+    if not rc_path.exists():
+        return ShellInitRemoveResult(shell_name=shell_name, rc_path=str(rc_path), changed=False)
+    existing = rc_path.read_text(encoding="utf-8")
+    updated = _remove_init_block(existing)
+    changed = updated != existing
+    if changed:
+        rc_path.write_text(updated, encoding="utf-8")
+    return ShellInitRemoveResult(shell_name=shell_name, rc_path=str(rc_path), changed=changed)
 
 
 def render_shell_init(shell_name: str, initial_result: ActivationResult | None = None) -> str:
@@ -196,6 +215,14 @@ def _upsert_init_block(existing: str, block: str) -> str:
     return prefix + normalized_block
 
 
+def _remove_init_block(existing: str) -> str:
+    pattern = re.compile(
+        rf"{re.escape(INIT_BLOCK_START)}.*?{re.escape(INIT_BLOCK_END)}\n?",
+        re.DOTALL,
+    )
+    return pattern.sub("", existing, count=1)
+
+
 def _render_bash_init() -> str:
     return """
 _packagent_update_prompt_modifier() {
@@ -327,6 +354,16 @@ packagent() {
     eval "${_packagent_output}"
     return 0
   fi
+  if [ "$1" = "uninstall" ]; then
+    PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=bash command packagent "$@"
+    local _packagent_status=$?
+    if [ "$_packagent_status" -eq 0 ]; then
+      unset PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
+      _packagent_refresh_prompt >/dev/null 2>&1 || true
+      unset PACKAGENT_PROMPT_MODIFIER PACKAGENT_PROMPT_LAST_MODIFIER
+    fi
+    return "$_packagent_status"
+  fi
   command packagent "$@"
 }
 _packagent_refresh_prompt
@@ -393,6 +430,16 @@ packagent() {
     _packagent_output="$(PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=zsh command packagent "$@")" || return $?
     eval "${_packagent_output}"
     return 0
+  fi
+  if [[ "$1" == "uninstall" ]]; then
+    PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=zsh command packagent "$@"
+    local _packagent_status=$?
+    if [[ "$_packagent_status" -eq 0 ]]; then
+      unset PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
+      _packagent_refresh_prompt >/dev/null 2>&1 || true
+      unset PACKAGENT_PROMPT_MODIFIER PACKAGENT_PROMPT_LAST_MODIFIER
+    fi
+    return "$_packagent_status"
   fi
   command packagent "$@"
 }

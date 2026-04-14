@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import json
 import shutil
@@ -28,6 +29,8 @@ from packagent.models import (
     PackagentState,
     StatusReport,
     TargetStatusReport,
+    TargetUninstallResult,
+    UninstallResult,
 )
 from packagent.paths import PackagentPaths
 from packagent.util import copy_directory, remove_path, timestamp_slug, utc_now_iso, write_json
@@ -37,11 +40,38 @@ from packagent.validation import validate_env_name
 BASE_MODE_FRESH = "fresh"
 BASE_MODE_IMPORT = "import"
 BASE_MODES = (BASE_MODE_IMPORT, BASE_MODE_FRESH)
+RESTORE_SOURCE_BASE = "base"
+RESTORE_SOURCE_BACKUP = "backup"
+RESTORE_SOURCES = (RESTORE_SOURCE_BASE, RESTORE_SOURCE_BACKUP)
+TAKEOVER_BACKUP_REASONS = {
+    "takeover_directory",
+    "takeover_symlink",
+    "takeover_file",
+}
+FRESH_BACKUP_REASONS = {
+    "fresh_base_directory",
+    "fresh_base_symlink",
+    "fresh_base_file",
+}
+BACKUP_REASONS_BY_MODE = {
+    BASE_MODE_IMPORT: TAKEOVER_BACKUP_REASONS,
+    BASE_MODE_FRESH: FRESH_BACKUP_REASONS,
+}
 UNMANAGED_HOME_KINDS = {
     HOME_KIND_UNMANAGED_DIRECTORY,
     HOME_KIND_UNMANAGED_FILE,
     HOME_KIND_UNMANAGED_SYMLINK,
 }
+
+
+@dataclass
+class _TargetRestorePlan:
+    target: ManagedTarget
+    destination: Path
+    action: str
+    restore_source: str
+    source_path: Optional[Path] = None
+    staging_path: Optional[Path] = None
 
 
 class PackagentManager:
@@ -155,6 +185,7 @@ class PackagentManager:
             raise UserFacingError(f"unsupported base mode '{base_mode}'")
         with mutation_lock(self.paths):
             state = self._ensure_state()
+            state.init_base_mode = base_mode
             if base_mode == BASE_MODE_IMPORT:
                 self._ensure_managed_targets(state)
             else:
@@ -170,6 +201,47 @@ class PackagentManager:
                 managed_home_path=str(self.host.managed_home_path(self.paths)),
                 codex_home=primary_home,
                 target_homes=target_homes,
+            )
+
+    def uninstall_base_mode(self) -> str:
+        with mutation_lock(self.paths):
+            state = self._load_existing_state_for_uninstall()
+            self._sync_state_targets(state)
+            return self._infer_init_base_mode(state)
+
+    def uninstall(self, restore_source: Optional[str] = None) -> UninstallResult:
+        if restore_source is not None and restore_source not in RESTORE_SOURCES:
+            raise UserFacingError(f"unsupported restore source '{restore_source}'")
+        with mutation_lock(self.paths):
+            state = self._load_existing_state_for_uninstall()
+            self._sync_state_targets(state)
+            base_mode = self._infer_init_base_mode(state)
+            if base_mode == BASE_MODE_FRESH:
+                if restore_source == RESTORE_SOURCE_BASE:
+                    raise UserFacingError("fresh-mode init can only uninstall from backup")
+                selected_restore_source = RESTORE_SOURCE_BACKUP
+            else:
+                if restore_source is None:
+                    raise UserFacingError(
+                        "import-mode uninstall requires --restore-source base or --restore-source backup",
+                    )
+                selected_restore_source = restore_source
+
+            inspections = self._inspect_targets()
+            self._preflight_uninstall_targets(state, inspections)
+            plans = self._build_uninstall_plans(state, selected_restore_source, base_mode)
+            self._stage_uninstall_plans(plans)
+            target_results = self._apply_uninstall_plans(plans)
+
+            state.active_env = state.base_env
+            state.init_base_mode = base_mode
+            state.last_link_target = None
+            for target_state in state.managed_targets.values():
+                target_state.last_link_target = None
+            self._save_state(state)
+            return UninstallResult(
+                restore_source=selected_restore_source,
+                target_results=target_results,
             )
 
     def remove_env(self, name: str) -> None:
@@ -201,6 +273,21 @@ class PackagentManager:
     def load_state(self) -> PackagentState:
         payload = json.loads(self.paths.state_file.read_text(encoding="utf-8"))
         return PackagentState.from_dict(payload)
+
+    def _load_existing_state_for_uninstall(self) -> PackagentState:
+        if not self.paths.state_file.exists():
+            raise UserFacingError("packagent is not initialized")
+        return self.load_state()
+
+    def _infer_init_base_mode(self, state: PackagentState) -> str:
+        if state.init_base_mode in BASE_MODES:
+            return state.init_base_mode
+        if any(record.reason in FRESH_BACKUP_REASONS for record in state.backups):
+            return BASE_MODE_FRESH
+        base_metadata = state.envs.get(state.base_env)
+        if base_metadata and base_metadata.source == "imported-home":
+            return BASE_MODE_IMPORT
+        return BASE_MODE_IMPORT
 
     def _ensure_state(self) -> PackagentState:
         self.paths.root.mkdir(parents=True, exist_ok=True)
@@ -475,6 +562,180 @@ class PackagentManager:
             if target.primary:
                 state.last_link_target = target_homes[target.key]
 
+    def _preflight_uninstall_targets(
+        self,
+        state: PackagentState,
+        inspections: Dict[str, HomeInspection],
+    ) -> None:
+        if state.active_env not in state.envs:
+            raise UserFacingError(
+                f"active environment '{state.active_env}' is missing from state; run 'packagent doctor --fix' first",
+            )
+        for target in self.host.targets:
+            inspection = inspections[target.key]
+            home_path = self.host.managed_target_path(self.paths, target)
+            if inspection.kind != HOME_KIND_MANAGED:
+                raise UserFacingError(
+                    f"cannot uninstall while {home_path} is {inspection.kind}; run 'packagent doctor --fix' or restore it manually",
+                )
+            expected_target = str(
+                self.backend.expected_target(self.paths, self.host, state.active_env, target),
+            )
+            if inspection.resolved_target != expected_target:
+                raise UserFacingError(
+                    f"cannot uninstall while {home_path} points to {inspection.resolved_target}; expected {expected_target}; run 'packagent doctor --fix' first",
+                )
+
+    def _build_uninstall_plans(
+        self,
+        state: PackagentState,
+        restore_source: str,
+        base_mode: str,
+    ) -> List[_TargetRestorePlan]:
+        plans: List[_TargetRestorePlan] = []
+        for target in self.host.targets:
+            destination = self.host.managed_target_path(self.paths, target)
+            if restore_source == RESTORE_SOURCE_BASE:
+                source_path = self.host.env_target_path(self.paths, state.base_env, target)
+                if not source_path.exists() or not source_path.is_dir():
+                    raise UserFacingError(
+                        f"cannot restore {target.key} from base; missing base target at {source_path}",
+                    )
+                plans.append(
+                    _TargetRestorePlan(
+                        target=target,
+                        destination=destination,
+                        action="restored",
+                        restore_source=restore_source,
+                        source_path=source_path,
+                    ),
+                )
+                continue
+
+            source_path = self._backup_source_for_target(state, target, base_mode)
+            if source_path is None:
+                plans.append(
+                    _TargetRestorePlan(
+                        target=target,
+                        destination=destination,
+                        action="removed",
+                        restore_source=restore_source,
+                    ),
+                )
+                continue
+            plans.append(
+                _TargetRestorePlan(
+                    target=target,
+                    destination=destination,
+                    action="restored",
+                    restore_source=restore_source,
+                    source_path=source_path,
+                ),
+            )
+        return plans
+
+    def _backup_source_for_target(
+        self,
+        state: PackagentState,
+        target: ManagedTarget,
+        base_mode: str,
+    ) -> Optional[Path]:
+        backup_reasons = BACKUP_REASONS_BY_MODE[base_mode]
+        for record in state.backups:
+            if record.reason not in backup_reasons:
+                continue
+            if not self._backup_record_matches_target(record, target):
+                continue
+            source_path = self._backup_snapshot_path(record, target)
+            if source_path.exists() or source_path.is_symlink():
+                return source_path
+            raise UserFacingError(
+                f"backup for {target.key} is recorded but missing at {source_path}",
+            )
+        return None
+
+    def _backup_record_matches_target(self, record: BackupRecord, target: ManagedTarget) -> bool:
+        if record.target_key:
+            return record.target_key == target.key
+        current_home = self.host.managed_target_path(self.paths, target)
+        if record.original_home == str(current_home):
+            return True
+        if Path(record.original_home).name == target.home_dir_name:
+            return True
+        backup_root = Path(record.backup_path)
+        return record.reason.endswith("_directory") and (backup_root / target.home_dir_name).exists()
+
+    def _backup_snapshot_path(self, record: BackupRecord, target: ManagedTarget) -> Path:
+        backup_root = Path(record.backup_path)
+        if record.reason.endswith("_directory"):
+            return backup_root / target.home_dir_name
+        if record.reason.endswith("_symlink"):
+            return backup_root / "resolved-home"
+        if record.reason.endswith("_file"):
+            return backup_root / "unexpected-home-file"
+        raise UserFacingError(f"unsupported backup reason '{record.reason}'")
+
+    def _stage_uninstall_plans(self, plans: List[_TargetRestorePlan]) -> None:
+        staged_paths: List[Path] = []
+        try:
+            for plan in plans:
+                if plan.source_path is None:
+                    continue
+                plan.staging_path = self._stage_restore_source(plan.source_path, plan.destination)
+                staged_paths.append(plan.staging_path)
+        except Exception:
+            for staged_path in staged_paths:
+                remove_path(staged_path)
+            raise
+
+    def _stage_restore_source(self, source_path: Path, destination: Path) -> Path:
+        staging_path = self._allocate_restore_staging_path(destination)
+        if source_path.is_dir() and not source_path.is_symlink():
+            copy_directory(source_path, staging_path)
+        else:
+            staging_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, staging_path, follow_symlinks=False)
+        return staging_path
+
+    def _allocate_restore_staging_path(self, destination: Path) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        candidate = destination.parent / f".{destination.name}.packagent-uninstall-{timestamp_slug()}"
+        suffix = 1
+        while candidate.exists() or candidate.is_symlink():
+            candidate = destination.parent / f".{destination.name}.packagent-uninstall-{timestamp_slug()}-{suffix}"
+            suffix += 1
+        return candidate
+
+    def _apply_uninstall_plans(self, plans: List[_TargetRestorePlan]) -> List[TargetUninstallResult]:
+        target_results: List[TargetUninstallResult] = []
+        try:
+            for plan in plans:
+                if plan.destination.is_symlink() or plan.destination.is_file():
+                    plan.destination.unlink()
+                elif plan.destination.exists():
+                    raise UserFacingError(
+                        f"cannot uninstall because {plan.destination} is no longer a managed symlink",
+                    )
+                if plan.staging_path is not None:
+                    plan.staging_path.rename(plan.destination)
+                    plan.staging_path = None
+                target_results.append(
+                    TargetUninstallResult(
+                        key=plan.target.key,
+                        managed_home_path=str(plan.destination),
+                        action=plan.action,
+                        restore_source=plan.restore_source,
+                        source_path=str(plan.source_path) if plan.source_path else None,
+                    ),
+                )
+        finally:
+            for plan in plans:
+                if plan.staging_path is not None and (
+                    plan.staging_path.exists() or plan.staging_path.is_symlink()
+                ):
+                    remove_path(plan.staging_path)
+        return target_results
+
     def _import_directory_target(self, state: PackagentState, target: ManagedTarget) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
         backup_root = self._allocate_backup_dir()
@@ -487,6 +748,7 @@ class PackagentManager:
                 reason="takeover_directory",
                 backup_path=str(backup_root),
                 original_home=str(home_path),
+                target_key=target.key,
             ),
         )
         self._mark_base_imported(state, str(backup_root))
@@ -506,8 +768,10 @@ class PackagentManager:
                 reason="fresh_base_directory",
                 backup_path=str(backup_root),
                 original_home=str(home_path),
+                target_key=target.key,
             ),
         )
+        state.init_base_mode = BASE_MODE_FRESH
 
     def _import_symlink_target(
         self,
@@ -544,6 +808,7 @@ class PackagentManager:
                 backup_path=str(backup_root),
                 original_home=str(home_path),
                 original_target=inspection.raw_target,
+                target_key=target.key,
             ),
         )
         self._mark_base_imported(state, str(backup_root))
@@ -582,8 +847,10 @@ class PackagentManager:
                 backup_path=str(backup_root),
                 original_home=str(home_path),
                 original_target=inspection.raw_target,
+                target_key=target.key,
             ),
         )
+        state.init_base_mode = BASE_MODE_FRESH
 
     def _backup_file_target(self, state: PackagentState, target: ManagedTarget) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
@@ -595,8 +862,10 @@ class PackagentManager:
                 reason="takeover_file",
                 backup_path=str(backup_root),
                 original_home=str(home_path),
+                target_key=target.key,
             ),
         )
+        state.init_base_mode = BASE_MODE_IMPORT
 
     def _backup_file_target_without_import(self, state: PackagentState, target: ManagedTarget) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
@@ -608,8 +877,10 @@ class PackagentManager:
                 reason="fresh_base_file",
                 backup_path=str(backup_root),
                 original_home=str(home_path),
+                target_key=target.key,
             ),
         )
+        state.init_base_mode = BASE_MODE_FRESH
 
     def _replace_base_target_with_snapshot(self, target: ManagedTarget, snapshot_dir: Path) -> None:
         base_target = self.host.env_target_path(self.paths, "base", target)
@@ -627,6 +898,7 @@ class PackagentManager:
             imported_from=current_metadata.imported_from or backup_root,
         )
         state.envs[state.base_env] = base_metadata
+        state.init_base_mode = BASE_MODE_IMPORT
         self._write_env_metadata(base_metadata)
 
     def _allocate_backup_dir(self) -> Path:

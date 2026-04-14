@@ -7,14 +7,24 @@ import shlex
 import sys
 from typing import Sequence
 
-from packagent.app import BASE_MODE_FRESH, BASE_MODE_IMPORT, BASE_MODES, PackagentManager
+from packagent.app import (
+    BASE_MODE_FRESH,
+    BASE_MODE_IMPORT,
+    BASE_MODES,
+    RESTORE_SOURCE_BACKUP,
+    RESTORE_SOURCE_BASE,
+    RESTORE_SOURCES,
+    PackagentManager,
+)
 from packagent.errors import UserFacingError
-from packagent.models import ActivationResult, DoctorReport, StatusReport
+from packagent.models import ActivationResult, DoctorReport, StatusReport, UninstallResult
 from packagent.shell import (
+    ShellInitRemoveResult,
     SUPPORTED_SHELLS,
     default_rc_path,
     detect_shell,
     install_shell_init,
+    remove_shell_init,
     render_activate_commands,
     render_deactivate_commands,
     render_shell_init,
@@ -49,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     remove_parser = subparsers.add_parser("remove", help="remove an environment")
     remove_parser.add_argument("name")
+
+    uninstall_parser = subparsers.add_parser("uninstall", help="restore managed homes and remove shell integration")
+    uninstall_parser.add_argument("--restore-source", choices=RESTORE_SOURCES)
+    uninstall_parser.add_argument("--shell", choices=SUPPORTED_SHELLS)
+    uninstall_parser.add_argument("--rc-file")
 
     doctor_parser = subparsers.add_parser("doctor", help="inspect the managed home")
     doctor_parser.add_argument("--fix", action="store_true")
@@ -89,6 +104,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             manager.remove_env(args.name)
             print(f"removed\t{args.name}")
             return 0
+        if args.command == "uninstall":
+            return _handle_uninstall(manager, args.restore_source, args.shell, args.rc_file)
         if args.command == "doctor":
             report = manager.doctor(fix=args.fix)
             _print_doctor(report)
@@ -166,6 +183,77 @@ def _resolve_base_mode(manager: PackagentManager, requested_base_mode: str | Non
         print("Please enter 'import' or 'fresh'.", file=sys.stderr)
 
 
+def _handle_uninstall(
+    manager: PackagentManager,
+    requested_restore_source: str | None,
+    requested_shell: str | None,
+    rc_file: str | None,
+) -> int:
+    restore_source = _resolve_uninstall_restore_source(manager, requested_restore_source)
+    result = manager.uninstall(restore_source)
+    shell_results = _remove_shell_init_blocks(manager, requested_shell, rc_file)
+    _print_uninstall_result(result)
+    for shell_result in shell_results:
+        rc_status = "updated" if shell_result.changed else "unchanged"
+        print(f"rc_file: {shell_result.rc_path} ({rc_status})")
+    print("packagent data remains at:")
+    print(f"  {manager.paths.root}")
+    print("Remove the executable with:")
+    print("  uv tool uninstall packagent")
+    print("If the current shell still shows a packagent prompt prefix, restart the shell.")
+    return 0
+
+
+def _resolve_uninstall_restore_source(
+    manager: PackagentManager,
+    requested_restore_source: str | None,
+) -> str:
+    base_mode = manager.uninstall_base_mode()
+    if base_mode == BASE_MODE_FRESH:
+        if requested_restore_source == RESTORE_SOURCE_BASE:
+            raise UserFacingError("fresh-mode init can only uninstall from backup")
+        return RESTORE_SOURCE_BACKUP
+    if requested_restore_source:
+        return requested_restore_source
+    if not sys.stdin.isatty():
+        raise UserFacingError(
+            "import-mode uninstall requires --restore-source base or --restore-source backup",
+        )
+    print("packagent was initialized in import mode.", file=sys.stderr)
+    print("Choose which data to restore to the default target paths:", file=sys.stderr)
+    print("  base:   copy the current base environment", file=sys.stderr)
+    print("  backup: restore the first-run backup snapshots", file=sys.stderr)
+    while True:
+        print("Restore source [base/backup]: ", end="", file=sys.stderr)
+        answer = input().strip().lower()
+        if answer == "base":
+            return RESTORE_SOURCE_BASE
+        if answer == "backup":
+            return RESTORE_SOURCE_BACKUP
+        print("Please enter 'base' or 'backup'.", file=sys.stderr)
+
+
+def _remove_shell_init_blocks(
+    manager: PackagentManager,
+    requested_shell: str | None,
+    rc_file: str | None,
+) -> list[ShellInitRemoveResult]:
+    if rc_file:
+        shell_name = requested_shell or detect_shell()
+        return [remove_shell_init(shell_name, Path(rc_file).expanduser())]
+    if requested_shell:
+        return [
+            remove_shell_init(
+                requested_shell,
+                default_rc_path(requested_shell, manager.paths.home),
+            ),
+        ]
+    return [
+        remove_shell_init(shell_name, default_rc_path(shell_name, manager.paths.home))
+        for shell_name in SUPPORTED_SHELLS
+    ]
+
+
 def _shell_hook_active() -> bool:
     return bool(os.environ.get("PACKAGENT_SHELL_HOOK"))
 
@@ -211,3 +299,22 @@ def _print_doctor(report: DoctorReport) -> None:
         print(f"issue={issue}")
     for repaired in report.repaired:
         print(f"repaired={repaired}")
+
+
+def _print_uninstall_result(result: UninstallResult) -> None:
+    print("==== Uninstalling packagent ====")
+    print(f"restore_source: {result.restore_source}")
+    print("target\taction\tmanaged_home\tsource")
+    for target_result in result.target_results:
+        source = target_result.source_path or ""
+        print(
+            "\t".join(
+                [
+                    target_result.key,
+                    target_result.action,
+                    target_result.managed_home_path,
+                    source,
+                ],
+            ),
+        )
+    print("==== Restored ====")
