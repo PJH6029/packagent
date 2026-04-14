@@ -191,9 +191,26 @@ Open an interactive shell:
 ./scripts/run_docker_sandbox.sh shell
 ```
 
+Open zsh in the same sandbox image:
+
+```bash
+./scripts/run_docker_sandbox.sh shell zsh
+```
+
 The image includes Python 3, `uv`, `pipx`, Node.js, npm, `@openai/codex`,
 `@anthropic-ai/claude-code`, bash, and zsh. npm global installs use the test
 user's `~/.local` prefix, so `npm install -g ...` works without root.
+The default interactive shell is bash on every host; pass `shell zsh` when you
+want to test zsh on the same machine.
+
+Interactive shell mode also installs the matching prompt framework inside the
+disposable container. `shell bash` installs Oh My Bash into `~/.oh-my-bash` and
+uses the `powerline` theme; `shell zsh` installs Oh My Zsh into `~/.oh-my-zsh`
+and uses `agnoster`. Disable this setup with:
+
+```bash
+PACKAGENT_DOCKER_ENABLE_PROMPT_FRAMEWORKS=0 ./scripts/run_docker_sandbox.sh shell zsh
+```
 
 By default, the wrapper copies your host Codex and Claude config directories
 into the disposable container before the test or shell starts:
@@ -232,16 +249,16 @@ Run optional real prompt-framework checks for Oh My Bash and Oh My Zsh:
 PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS=1 ./scripts/run_docker_sandbox.sh test
 ```
 
-When local `~/.oh-my-bash` or `~/.oh-my-zsh` directories exist, the wrapper
-mounts them read-only for those optional checks. Otherwise the container clones
-the frameworks during the test.
+Those optional checks clone fresh framework checkouts inside the container.
+Interactive shell mode does the same instead of copying host prompt framework
+directories.
 
 Inside the container, the repo is available at `/workspace`:
 
 ```bash
 uv tool install /workspace
-packagent init
-source ~/.bashrc
+packagent init --shell bash  # or: packagent init --shell zsh
+source ~/.bashrc             # or: source ~/.zshrc
 ```
 
 `uv tool install packagent` will only work after a real package publish.

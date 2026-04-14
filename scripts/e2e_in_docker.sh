@@ -27,17 +27,10 @@ assert_symlink_target() {
 
 prepare_prompt_framework() {
   local label="$1"
-  local mounted_source="$2"
-  local git_url="$3"
-  local target_dir="$4"
+  local git_url="$2"
+  local target_dir="$3"
 
   rm -rf "$target_dir"
-  if [ -d "$mounted_source" ]; then
-    echo "== copying ${label} from mounted source =="
-    mkdir -p "$target_dir"
-    cp -a "$mounted_source/." "$target_dir/"
-    return 0
-  fi
 
   echo "== cloning ${label} =="
   git clone --depth 1 "$git_url" "$target_dir" >/tmp/packagent-${label// /-}-clone.txt 2>&1 || {
@@ -52,12 +45,10 @@ run_real_prompt_framework_tests() {
 
   prepare_prompt_framework \
     "Oh My Bash" \
-    "/tmp/packagent-host-config/oh-my-bash" \
     "https://github.com/ohmybash/oh-my-bash.git" \
     "$omb_dir"
   prepare_prompt_framework \
     "Oh My Zsh" \
-    "/tmp/packagent-host-config/oh-my-zsh" \
     "https://github.com/ohmyzsh/ohmyzsh.git" \
     "$omz_dir"
 
@@ -98,7 +89,7 @@ run_real_prompt_framework_tests() {
   echo "== verify real oh-my-zsh prompt composition =="
   ZSH="$omz_dir" zsh -fic '
     unsetopt nounset 2>/dev/null || true
-    ZSH_THEME=robbyrussell
+    ZSH_THEME=agnoster
     plugins=()
     source "$ZSH/oh-my-zsh.sh" || exit 1
     PACKAGENT_ACTIVE_ENV=base
@@ -435,6 +426,30 @@ EOF
   assert_path_missing "$fresh_home/.packagent/envs/base/.claude/.credentials.json"
   find "$fresh_home/.packagent/backups" -name auth.json -print -quit | grep -q . || fail "fresh mode did not back up Codex auth"
   find "$fresh_home/.packagent/backups" -name .credentials.json -print -quit | grep -q . || fail "fresh mode did not back up Claude auth"
+
+  echo "== verify zsh rc install path =="
+  local zsh_home
+  zsh_home="$(mktemp -d)"
+  mkdir -p "$zsh_home/.codex" "$zsh_home/.agents" "$zsh_home/.claude"
+  cat > "$zsh_home/.codex/auth.json" <<'EOF'
+{"codex_auth": "zsh-import"}
+EOF
+  HOME="$zsh_home" SHELL=/bin/zsh packagent init --shell zsh --base-mode import --rc-file "$zsh_home/.zshrc" >/tmp/packagent-zsh-init.txt
+  grep -q 'shell: zsh' /tmp/packagent-zsh-init.txt || fail "packagent init did not report zsh shell"
+  grep -q "source $zsh_home/.zshrc" /tmp/packagent-zsh-init.txt || fail "packagent init did not report zsh source command"
+  grep -q 'eval "$(packagent shell init zsh)"' "$zsh_home/.zshrc" || fail "zshrc was not updated by packagent init"
+  assert_symlink_target "$zsh_home/.codex" "$zsh_home/.packagent/envs/base/.codex"
+  grep -q '"codex_auth": "zsh-import"' "$zsh_home/.packagent/envs/base/.codex/auth.json" || fail "zsh init did not import Codex auth"
+  HOME="$zsh_home" SHELL=/bin/zsh zsh -fc '
+    source "$HOME/.zshrc"
+    source "$HOME/.zshrc"
+    _packagent_prompt_command
+    [ "${PACKAGENT_ACTIVE_ENV:-}" = "base" ] || exit 1
+    [ "$(packagent_prompt_info)" = "(base) " ] || exit 1
+  ' >/tmp/packagent-zshrc-source.txt 2>&1 || {
+    cat /tmp/packagent-zshrc-source.txt >&2
+    fail "zshrc repeated source failed"
+  }
 
   echo "== remove non-active env and uninstall packagent =="
   packagent remove codex-with-demo
