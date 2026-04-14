@@ -284,6 +284,20 @@ EOF
     _theme_precmd
     _packagent_prompt_command
     [ "$PROMPT" = "(work) theme%# " ]
+    _right_theme_precmd() {
+      PROMPT="theme%# "
+      RPROMPT="conda kube"
+    }
+    PACKAGENT_ACTIVE_ENV=base
+    _right_theme_precmd
+    _packagent_prompt_command
+    [ "$PROMPT" = "theme%# " ]
+    [ "$RPROMPT" = "(base) conda kube" ]
+    PACKAGENT_ACTIVE_ENV=work
+    _right_theme_precmd
+    _packagent_prompt_command
+    [ "$PROMPT" = "theme%# " ]
+    [ "$RPROMPT" = "(work) conda kube" ]
   ' >/tmp/packagent-zsh-prompt.txt 2>&1 || {
     cat /tmp/packagent-zsh-prompt.txt >&2
     fail "zsh prompt hook composition failed"

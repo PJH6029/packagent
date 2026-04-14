@@ -99,6 +99,9 @@ The hook itself:
 - uses zsh `add-zsh-hook` or `precmd_functions` without replacing theme hooks
 - adds an Oh My Bash Powerline segment named `packagent` when that prompt model
   is active, otherwise falls back to a `(<env>)` prompt prefix
+- places the zsh prompt marker in `RPROMPT` when a theme already uses a right
+  prompt, so it aligns with theme-managed metadata such as Conda or kubectl
+  context instead of forcing a leftmost prefix
 - removes its previous prompt prefix before adding a new one, including when
   tools such as Conda have prepended their own prompt modifier
 - leaves any existing `CODEX_HOME` export untouched

@@ -399,14 +399,43 @@ _packagent_strip_prompt_prefix() {
   prompt="$(_packagent_remove_prompt_modifier "$prompt" "${PACKAGENT_PROMPT_MODIFIER-}")"
   print -r -- "$prompt"
 }
+_packagent_zsh_prompt_position() {
+  local requested="${PACKAGENT_ZSH_PROMPT_POSITION:-auto}"
+  case "$requested" in
+    left|right)
+      print -r -- "$requested"
+      return 0
+      ;;
+  esac
+  local base_rprompt="$1"
+  if [[ -n "$base_rprompt" ]]; then
+    print -r -- "right"
+  else
+    print -r -- "left"
+  fi
+}
 _packagent_refresh_prompt() {
   _packagent_update_prompt_modifier
   local base_prompt
+  local base_rprompt
+  local prompt_position
   base_prompt="$(_packagent_strip_prompt_prefix "${PROMPT-}")"
-  if [[ -n "${PACKAGENT_PROMPT_MODIFIER-}" ]]; then
-    PROMPT="${PACKAGENT_PROMPT_MODIFIER}${base_prompt}"
-  else
+  base_rprompt="$(_packagent_strip_prompt_prefix "${RPROMPT-}")"
+  prompt_position="$(_packagent_zsh_prompt_position "$base_rprompt")"
+  if [[ "$prompt_position" == "right" ]]; then
     PROMPT="${base_prompt}"
+    if [[ -n "${PACKAGENT_PROMPT_MODIFIER-}" ]]; then
+      RPROMPT="${PACKAGENT_PROMPT_MODIFIER}${base_rprompt}"
+    else
+      RPROMPT="${base_rprompt}"
+    fi
+  else
+    if [[ -n "${PACKAGENT_PROMPT_MODIFIER-}" ]]; then
+      PROMPT="${PACKAGENT_PROMPT_MODIFIER}${base_prompt}"
+    else
+      PROMPT="${base_prompt}"
+    fi
+    RPROMPT="${base_rprompt}"
   fi
   PACKAGENT_PROMPT_LAST_MODIFIER="${PACKAGENT_PROMPT_MODIFIER-}"
 }

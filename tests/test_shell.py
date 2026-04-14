@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from packagent.models import ActivationResult
 from packagent.shell import (
@@ -257,8 +260,57 @@ def test_zsh_shell_init_contains_wrapper_and_precmd_hook() -> None:
     assert "add-zsh-hook precmd _packagent_prompt_command" in script
     assert "precmd_functions+=(_packagent_prompt_command)" in script
     assert "packagent_prompt_info()" in script
+    assert "PACKAGENT_ZSH_PROMPT_POSITION" in script
     assert 'PACKAGENT_SHELL=zsh' in script
     assert '[[ "$1" == "uninstall" ]]' in script
+
+
+def test_zsh_shell_init_uses_right_prompt_when_theme_has_rprompt(tmp_path: Path) -> None:
+    if shutil.which("zsh") is None:
+        pytest.skip("zsh is not installed")
+
+    script_path = tmp_path / "zsh-rprompt.zsh"
+    hook = render_shell_init("zsh")
+    script_path.write_text(
+        f"""
+set -e
+PROMPT='theme%# '
+RPROMPT='conda kube'
+PACKAGENT_ACTIVE_ENV=base
+{hook}
+_theme_precmd() {{
+  PROMPT='theme%# '
+  RPROMPT='conda kube'
+}}
+_theme_precmd
+_packagent_prompt_command
+[[ "$PROMPT" == 'theme%# ' ]] || {{ print -u2 -- "unexpected left prompt: $PROMPT"; exit 1; }}
+[[ "$RPROMPT" == '(base) conda kube' ]] || {{ print -u2 -- "unexpected right prompt: $RPROMPT"; exit 1; }}
+PACKAGENT_ACTIVE_ENV=work
+_theme_precmd
+_packagent_prompt_command
+[[ "$PROMPT" == 'theme%# ' ]] || {{ print -u2 -- "unexpected left prompt after switch: $PROMPT"; exit 1; }}
+[[ "$RPROMPT" == '(work) conda kube' ]] || {{ print -u2 -- "unexpected right prompt after switch: $RPROMPT"; exit 1; }}
+_plain_theme_precmd() {{
+  PROMPT='plain%# '
+  RPROMPT=''
+}}
+_plain_theme_precmd
+_packagent_prompt_command
+[[ "$PROMPT" == '(work) plain%# ' ]] || {{ print -u2 -- "unexpected plain prompt: $PROMPT"; exit 1; }}
+[[ -z "$RPROMPT" ]] || {{ print -u2 -- "unexpected plain right prompt: $RPROMPT"; exit 1; }}
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["zsh", "-f", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_bash_uninstall_wrapper_clears_current_prompt_state(tmp_path: Path) -> None:

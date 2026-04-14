@@ -102,9 +102,9 @@ Activating an env switches the managed user-level targets to symlinks pointing
 at that env. Only one env is globally active at a time.
 
 The shell hook also exposes the active env in your prompt. Plain bash/zsh get a
-`(<env>)` prefix, and Oh My Bash Powerline-style themes get a `[pa] <env>`
-segment. For custom themes, use `packagent_prompt_info` or
-`PACKAGENT_PROMPT_MODIFIER`.
+`(<env>)` prefix, zsh themes with an existing right prompt place the marker in
+`RPROMPT`, and Oh My Bash Powerline-style themes get a `[pa] <env>` segment. For
+custom themes, use `packagent_prompt_info` or `PACKAGENT_PROMPT_MODIFIER`.
 
 By default, `packagent` manages:
 
