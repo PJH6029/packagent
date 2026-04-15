@@ -33,6 +33,8 @@ def test_paths_discover_uses_packagent_root(tmp_path: Path) -> None:
 
     assert paths.root == tmp_path / ".packagent"
     assert paths.env_dir("work") == tmp_path / ".packagent" / "envs" / "work"
+    assert paths.backups_root == tmp_path / ".packagent-backups"
+    assert paths.backups_root.parent == paths.root.parent
 
 
 def test_home_inspection_detects_missing_directory_and_managed_symlink(manager: PackagentManager) -> None:
@@ -109,6 +111,7 @@ def test_first_activation_imports_existing_home_into_base_and_replaces_link(mana
     assert manager.host.env_home_path(manager.paths, "base").joinpath("AGENTS.md").read_text(encoding="utf-8") == "legacy-agents"
     backups = sorted(manager.paths.backups_root.iterdir())
     assert backups
+    assert backups[0].parent == manager.paths.home / ".packagent-backups"
 
 
 def test_first_activation_preserves_symlinks_when_importing_home(manager: PackagentManager) -> None:
@@ -490,6 +493,76 @@ def test_uninstall_backup_restore_leaves_originally_missing_targets_absent(
     assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
     assert not agents_home.exists()
     assert not agents_home.is_symlink()
+
+
+def test_uninstall_backup_restore_uses_recorded_legacy_backup_path(
+    manager: PackagentManager,
+) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    manager.initialize_base("fresh")
+
+    state = manager.load_state()
+    backup_root = Path(state.backups[0].backup_path)
+    legacy_backup_root = manager.paths.root / "backups" / backup_root.name
+    legacy_backup_root.parent.mkdir(parents=True)
+    backup_root.rename(legacy_backup_root)
+    state.backups[0].backup_path = str(legacy_backup_root)
+    manager.paths.state_file.write_text(
+        json.dumps(state.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    result = manager.uninstall()
+
+    assert result.restore_source == "backup"
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+    codex_result = next(item for item in result.target_results if item.key == "codex-home")
+    assert codex_result.source_path == str(legacy_backup_root / ".codex")
+
+
+def test_doctor_fix_migrates_legacy_backup_directory(
+    manager: PackagentManager,
+) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    manager.initialize_base("import")
+
+    state = manager.load_state()
+    backup_root = Path(state.backups[0].backup_path)
+    legacy_backup_root = manager.paths.root / "backups" / backup_root.name
+    legacy_backup_root.parent.mkdir(parents=True)
+    backup_root.rename(legacy_backup_root)
+    state.backups[0].backup_path = str(legacy_backup_root)
+    state.envs["base"].imported_from = str(legacy_backup_root)
+    manager.paths.state_file.write_text(
+        json.dumps(state.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    report = manager.doctor()
+
+    assert any("legacy backup directory exists" in issue for issue in report.issues)
+
+    fixed = manager.doctor(fix=True)
+    migrated = manager.load_state()
+    migrated_backup_root = Path(migrated.backups[0].backup_path)
+
+    assert not fixed.issues
+    assert any("migrated legacy backups" in repaired for repaired in fixed.repaired)
+    assert migrated_backup_root.parent == manager.paths.backups_root
+    assert migrated_backup_root.joinpath(".codex", "auth.json").read_text(encoding="utf-8") == "codex-original"
+    assert migrated.envs["base"].imported_from == str(migrated_backup_root)
+    env_metadata = json.loads(manager.paths.env_metadata_file("base").read_text(encoding="utf-8"))
+    assert env_metadata["imported_from"] == str(migrated_backup_root)
+    assert not legacy_backup_root.parent.exists()
+
+    result = manager.uninstall("backup")
+
+    assert result.restore_source == "backup"
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
 
 
 def test_uninstall_refuses_target_drift_without_partial_restore(manager: PackagentManager) -> None:

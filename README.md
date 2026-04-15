@@ -117,19 +117,19 @@ If `CODEX_HOME` is already set, `packagent` manages that Codex path instead of
 instead of `~/.claude`. `packagent` does not export or rewrite those variables
 for you.
 
-On first takeover, existing unmanaged target paths are backed up. By default
-they are imported into the permanent `base` env; with `--base-mode fresh`,
-`base` starts empty after the backup. `base` is the fallback environment and
-cannot be removed.
+On first takeover, existing unmanaged target paths are backed up under
+`~/.packagent-backups`. By default they are imported into the permanent `base`
+env; with `--base-mode fresh`, `base` starts empty after the backup. `base` is
+the fallback environment and cannot be removed.
 
 `packagent uninstall` removes the managed shell startup block and replaces the
 managed symlinks with normal user-level paths again. If `init` used import
 mode, interactive uninstall asks whether to restore from the copied `base` env
 or the original backup snapshots; non-interactive uninstall requires
 `--restore-source base` or `--restore-source backup`. If `init` used fresh
-mode, uninstall restores backup snapshots. `~/.packagent` is kept as
-recoverable data; remove the executable separately with `uv tool uninstall
-packagent`.
+mode, uninstall restores backup snapshots. `~/.packagent` and
+`~/.packagent-backups` are kept as recoverable data; remove the executable
+separately with `uv tool uninstall packagent`.
 
 Normal `packagent create -n <env>` starts with separate history, logs, settings,
 skills, caches, and sessions, but seeds cumbersome auth files from the active
@@ -157,6 +157,10 @@ packagent uninstall [--restore-source {base,backup}] [--shell {bash|zsh}] [--rc-
 packagent doctor
 packagent doctor --fix
 ```
+
+`packagent doctor --fix` also migrates legacy backup snapshots from
+`~/.packagent/backups` to `~/.packagent-backups` and rewrites recorded backup
+paths in state.
 
 ## Guarantees and Limits
 

@@ -25,7 +25,7 @@ State lives in `~/.packagent/state.json` and records:
 - active environment
 - known environments
 - init base mode, when recorded by current versions
-- backup history from first-run takeover
+- backup history from first-run takeover, stored under `~/.packagent-backups`
 - managed target metadata
 
 Each environment also contains a small hidden metadata file at
@@ -42,7 +42,7 @@ When `packagent init` or first activation manages homes for the first time,
 home path (`CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude`):
 
 - missing path: create a managed symlink
-- unmanaged directory: move it into `backups/<timestamp>/`, import it into
+- unmanaged directory: move it into `~/.packagent-backups/<timestamp>/`, import it into
   the matching `base` target, then replace the managed target path
 - unmanaged symlink: snapshot the resolved target into a backup, import that
   snapshot into the matching `base` target, then replace the managed target path
@@ -56,6 +56,10 @@ always `base`.
 not import the backed-up files into `base`. Interactive `init` prompts for the
 base mode when unmanaged homes exist; non-interactive `init` defaults to
 `import` for compatibility.
+
+`packagent doctor --fix` migrates legacy backup snapshots from
+`~/.packagent/backups` into `~/.packagent-backups`, then updates backup records
+and imported-base metadata in `state.json` to the new paths.
 
 ## Uninstall rollback
 
@@ -71,7 +75,7 @@ non-interactive shells must pass `--restore-source base` or
 `--restore-source backup`. For fresh-mode installs, uninstall always restores
 backup snapshots. Targets that had no first-run backup are left absent in
 backup mode. The command removes packagent's managed shell rc block but keeps
-`~/.packagent` as recoverable data.
+`~/.packagent` and `~/.packagent-backups` as recoverable data.
 
 ## Environment creation
 

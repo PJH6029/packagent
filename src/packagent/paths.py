@@ -22,7 +22,7 @@ class PackagentPaths:
             home=user_home,
             root=root,
             envs_root=root / "envs",
-            backups_root=root / "backups",
+            backups_root=user_home / ".packagent-backups",
             state_file=root / "state.json",
             lock_file=root / "state.lock",
         )

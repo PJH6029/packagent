@@ -438,8 +438,8 @@ EOF
   assert_path_missing "$fresh_home/.packagent/envs/base/.codex/auth.json"
   assert_path_missing "$fresh_home/.packagent/envs/base/.codex/history.jsonl"
   assert_path_missing "$fresh_home/.packagent/envs/base/.claude/.credentials.json"
-  find "$fresh_home/.packagent/backups" -name auth.json -print -quit | grep -q . || fail "fresh mode did not back up Codex auth"
-  find "$fresh_home/.packagent/backups" -name .credentials.json -print -quit | grep -q . || fail "fresh mode did not back up Claude auth"
+  find "$fresh_home/.packagent-backups" -name auth.json -print -quit | grep -q . || fail "fresh mode did not back up Codex auth"
+  find "$fresh_home/.packagent-backups" -name .credentials.json -print -quit | grep -q . || fail "fresh mode did not back up Claude auth"
   HOME="$fresh_home" packagent uninstall --shell bash --rc-file "$fresh_home/.bashrc" >/tmp/packagent-fresh-uninstall.txt
   grep -q 'restore_source: backup' /tmp/packagent-fresh-uninstall.txt || fail "fresh uninstall did not use backup restore source"
   [ ! -L "$fresh_home/.codex" ] || fail "fresh uninstall left Codex home as a symlink"

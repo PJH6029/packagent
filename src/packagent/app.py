@@ -922,6 +922,14 @@ class PackagentManager:
             issues.append("base environment is missing from state")
         if not self.paths.env_dir(state.base_env).exists():
             issues.append("base environment directory is missing")
+        legacy_backups_root = self._legacy_backups_root()
+        if legacy_backups_root.exists() or legacy_backups_root.is_symlink():
+            if legacy_backups_root.is_dir() and not legacy_backups_root.is_symlink():
+                issues.append(
+                    f"legacy backup directory exists at {legacy_backups_root}; run 'packagent doctor --fix' to migrate it to {self.paths.backups_root}",
+                )
+            else:
+                issues.append(f"legacy backup path exists but is not a directory: {legacy_backups_root}")
         if state.active_env not in state.envs:
             issues.append(f"active environment '{state.active_env}' is missing from state")
         for target in self.host.targets:
@@ -968,6 +976,7 @@ class PackagentManager:
         inspections: Dict[str, HomeInspection],
     ) -> List[str]:
         repaired: List[str] = []
+        repaired.extend(self._migrate_legacy_backups(state))
         if state.base_env not in state.envs:
             metadata = EnvMetadata(
                 name=state.base_env,
@@ -995,6 +1004,59 @@ class PackagentManager:
         self._save_state(state)
         repaired.append(f"repointed managed targets to '{state.active_env}'")
         return repaired
+
+    def _legacy_backups_root(self) -> Path:
+        return self.paths.root / "backups"
+
+    def _migrate_legacy_backups(self, state: PackagentState) -> List[str]:
+        legacy_root = self._legacy_backups_root()
+        if not legacy_root.exists() and not legacy_root.is_symlink():
+            return []
+        if not legacy_root.is_dir() or legacy_root.is_symlink():
+            raise UserFacingError(f"legacy backup path exists but is not a directory: {legacy_root}")
+
+        self.paths.backups_root.mkdir(parents=True, exist_ok=True)
+        moved_paths: Dict[str, str] = {}
+        for source_path in sorted(legacy_root.iterdir()):
+            destination = self._allocate_migrated_backup_path(source_path.name)
+            shutil.move(str(source_path), str(destination))
+            moved_paths[str(source_path)] = str(destination)
+
+        legacy_root.rmdir()
+        if not moved_paths:
+            return [f"removed empty legacy backup directory at {legacy_root}"]
+
+        for record in state.backups:
+            migrated_path = self._migrated_legacy_path(record.backup_path, moved_paths)
+            if migrated_path:
+                record.backup_path = migrated_path
+        for metadata in state.envs.values():
+            if not metadata.imported_from:
+                continue
+            migrated_path = self._migrated_legacy_path(metadata.imported_from, moved_paths)
+            if migrated_path:
+                metadata.imported_from = migrated_path
+                self._write_env_metadata(metadata)
+
+        return [f"migrated legacy backups from {legacy_root} to {self.paths.backups_root}"]
+
+    def _allocate_migrated_backup_path(self, name: str) -> Path:
+        candidate = self.paths.backups_root / name
+        suffix = 1
+        while candidate.exists() or candidate.is_symlink():
+            candidate = self.paths.backups_root / f"{name}-{suffix}"
+            suffix += 1
+        return candidate
+
+    def _migrated_legacy_path(self, path_value: str, moved_paths: Dict[str, str]) -> Optional[str]:
+        path = Path(path_value)
+        for old_root, new_root in moved_paths.items():
+            try:
+                relative = path.relative_to(old_root)
+            except ValueError:
+                continue
+            return str(Path(new_root) / relative)
+        return None
 
     def _managed_env_adoption_candidate(self, inspections: Dict[str, HomeInspection]) -> Optional[str]:
         primary_target = self.host.primary_target()
