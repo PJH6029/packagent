@@ -175,7 +175,8 @@ EOF
   grep -q 'base_mode: import' /tmp/packagent-init.txt || fail "packagent init did not report import base mode"
   grep -q 'active_env: base' /tmp/packagent-init.txt || fail "packagent init did not report active base env"
   grep -q 'source /home/tester/.bashrc' /tmp/packagent-init.txt || fail "packagent init did not report source command"
-  grep -q 'eval "$(packagent shell init bash)"' "$HOME/.bashrc" || fail "bashrc was not updated by packagent init"
+  grep -q 'shell init bash' "$HOME/.bashrc" || fail "bashrc was not updated by packagent init"
+  grep -Fq '"$HOME/.local/bin/packagent"' "$HOME/.bashrc" || fail "bashrc missing local packagent fallback"
   echo "== verify bash rc can be sourced repeatedly =="
   bash --rcfile "$HOME/.bashrc" -i -c \
     'source "$HOME/.bashrc"; source "$HOME/.bashrc"; _packagent_prompt_command; [ "${PACKAGENT_ACTIVE_ENV:-}" = "base" ]' \
@@ -448,7 +449,7 @@ EOF
   grep -q '"history": "fresh-backup-only"' "$fresh_home/.codex/history.jsonl" || fail "fresh uninstall did not restore Codex history backup"
   grep -q '"claude_auth": "fresh-backup-only"' "$fresh_home/.claude/.credentials.json" || fail "fresh uninstall did not restore Claude backup"
   assert_path_missing "$fresh_home/.agents"
-  if grep -q 'eval "$(packagent shell init bash)"' "$fresh_home/.bashrc"; then
+  if grep -q '# >>> packagent initialize >>>' "$fresh_home/.bashrc"; then
     fail "fresh uninstall did not remove shell init block"
   fi
 
@@ -462,7 +463,8 @@ EOF
   HOME="$zsh_home" SHELL=/bin/zsh packagent init --shell zsh --base-mode import --rc-file "$zsh_home/.zshrc" >/tmp/packagent-zsh-init.txt
   grep -q 'shell: zsh' /tmp/packagent-zsh-init.txt || fail "packagent init did not report zsh shell"
   grep -q "source $zsh_home/.zshrc" /tmp/packagent-zsh-init.txt || fail "packagent init did not report zsh source command"
-  grep -q 'eval "$(packagent shell init zsh)"' "$zsh_home/.zshrc" || fail "zshrc was not updated by packagent init"
+  grep -q 'shell init zsh' "$zsh_home/.zshrc" || fail "zshrc was not updated by packagent init"
+  grep -Fq '"$HOME/.local/bin/packagent"' "$zsh_home/.zshrc" || fail "zshrc missing local packagent fallback"
   assert_symlink_target "$zsh_home/.codex" "$zsh_home/.packagent/envs/base/.codex"
   grep -q '"codex_auth": "zsh-import"' "$zsh_home/.packagent/envs/base/.codex/auth.json" || fail "zsh init did not import Codex auth"
   HOME="$zsh_home" SHELL=/bin/zsh zsh -fc '
@@ -488,9 +490,20 @@ EOF
   grep -q "packagent e2e codex seed" "$HOME/.codex/packagent-e2e-codex-seed.txt" || fail "uninstall did not restore base Codex home"
   grep -q "Legacy skill content" "$HOME/.agents/skills/legacy-skill/SKILL.md" || fail "uninstall did not restore base agents home"
   grep -q '"packagent_e2e_claude_seed": true' "$HOME/.claude/packagent-e2e-claude-seed.json" || fail "uninstall did not restore base Claude home"
-  if grep -q 'eval "$(packagent shell init bash)"' "$HOME/.bashrc"; then
+  if grep -q '# >>> packagent initialize >>>' "$HOME/.bashrc"; then
     fail "uninstall did not remove shell init block"
   fi
+
+  echo "== verify re-init after base restore =="
+  packagent init --shell bash --base-mode import >/tmp/packagent-reinit-after-uninstall.txt
+  grep -q 'base_mode: import' /tmp/packagent-reinit-after-uninstall.txt || fail "re-init did not report import base mode"
+  assert_symlink_target "$HOME/.codex" "$root/envs/base/.codex"
+  assert_symlink_target "$HOME/.agents" "$root/envs/base/.agents"
+  assert_symlink_target "$HOME/.claude" "$root/envs/base/.claude"
+  grep -q "packagent e2e codex seed" "$root/envs/base/.codex/packagent-e2e-codex-seed.txt" || fail "re-init did not preserve restored Codex home"
+  packagent uninstall --restore-source base --shell bash >/tmp/packagent-reuninstall.txt
+  grep -q 'restore_source: base' /tmp/packagent-reuninstall.txt || fail "second uninstall did not report base restore source"
+  [ ! -L "$HOME/.codex" ] || fail "second uninstall left Codex home as a symlink"
 
   uv tool uninstall packagent
   [ ! -x "$packagent_bin" ] || fail "packagent executable still exists after uninstall"

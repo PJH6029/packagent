@@ -408,6 +408,38 @@ def test_initialize_base_fresh_backs_up_existing_targets_without_importing(
     assert manager.load_state().init_base_mode == "fresh"
 
 
+def test_initialize_base_retries_if_unmanaged_home_appears_before_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LateUnmanagedHomeBackend(GlobalSymlinkBackend):
+        def __init__(self) -> None:
+            self.created_late_home = False
+
+        def activate(self, paths, host, env_name, target=None):  # type: ignore[no-untyped-def]
+            resolved_target = target or host.primary_target()
+            if not self.created_late_home and resolved_target.key == "codex-home":
+                self.created_late_home = True
+                home = host.managed_target_path(paths, resolved_target)
+                home.mkdir(parents=True)
+                home.joinpath("late.txt").write_text("late", encoding="utf-8")
+            return super().activate(paths, host, env_name, target)
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    manager = PackagentManager(
+        paths=PackagentPaths.discover(),
+        backend=LateUnmanagedHomeBackend(),
+    )
+
+    result = manager.initialize_base("import")
+
+    codex_home = manager.host.managed_home_path(manager.paths)
+    assert result.env_name == "base"
+    assert codex_home.is_symlink()
+    assert codex_home.resolve() == manager.host.env_home_path(manager.paths, "base")
+    assert manager.host.env_home_path(manager.paths, "base").joinpath("late.txt").read_text(encoding="utf-8") == "late"
+
+
 def test_uninstall_import_mode_can_restore_from_base(manager: PackagentManager) -> None:
     agents_target = manager.host.target_by_key("agents-home")
     claude_target = manager.host.target_by_key("claude-home")
@@ -436,6 +468,23 @@ def test_uninstall_import_mode_can_restore_from_base(manager: PackagentManager) 
     assert claude_home.joinpath("settings.json").read_text(encoding="utf-8") == "claude-original"
     assert manager.paths.root.exists()
     assert manager.load_state().last_link_target is None
+
+
+def test_initialize_base_can_reinit_after_uninstall_restore_from_base(manager: PackagentManager) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    manager.initialize_base("import")
+    manager.host.env_home_path(manager.paths, "base").joinpath("base-only.txt").write_text("base", encoding="utf-8")
+
+    manager.uninstall("base")
+    result = manager.initialize_base("import")
+
+    assert result.env_name == "base"
+    assert codex_home.is_symlink()
+    assert codex_home.resolve() == manager.host.env_home_path(manager.paths, "base")
+    assert manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+    assert manager.host.env_home_path(manager.paths, "base").joinpath("base-only.txt").read_text(encoding="utf-8") == "base"
 
 
 def test_uninstall_import_mode_can_restore_from_backup(manager: PackagentManager) -> None:
@@ -913,6 +962,35 @@ def test_cli_uninstall_interactive_import_mode_can_choose_backup(
     assert "restore_source: backup" in captured.out
     assert "Restore source" in captured.err
     assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+
+
+def test_cli_init_can_reinit_after_uninstall_restore_from_base(
+    manager: PackagentManager,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    main(["init", "--shell", "bash", "--base-mode", "import"])
+    manager.host.env_home_path(manager.paths, "base").joinpath("base-only.txt").write_text("base", encoding="utf-8")
+    main(["uninstall", "--restore-source", "base", "--shell", "bash"])
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "stdin", TtyInput("\n"))
+
+    exit_code = main(["init", "--shell", "bash"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Base mode" in captured.err
+    assert "refusing to overwrite unmanaged home directory" not in captured.err
+    assert "base_mode: import" in captured.out
+    assert codex_home.is_symlink()
+    assert manager.host.env_home_path(manager.paths, "base").joinpath("base-only.txt").read_text(encoding="utf-8") == "base"
 
 
 def test_cli_uninstall_restores_and_removes_managed_shell_block(

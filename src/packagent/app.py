@@ -186,11 +186,7 @@ class PackagentManager:
         with mutation_lock(self.paths):
             state = self._ensure_state()
             state.init_base_mode = base_mode
-            if base_mode == BASE_MODE_IMPORT:
-                self._ensure_managed_targets(state)
-            else:
-                self._backup_unmanaged_targets_without_import(state)
-            target_homes = self._activate_targets(state.base_env)
+            target_homes = self._prepare_and_activate_base_targets(state, base_mode)
             primary_target = self.host.primary_target()
             primary_home = target_homes[primary_target.key]
             state.active_env = state.base_env
@@ -454,6 +450,30 @@ class PackagentManager:
         self._preflight_managed_targets(inspections)
         for target in self.host.targets:
             self._ensure_managed_target(state, target, inspections[target.key])
+
+    def _prepare_and_activate_base_targets(
+        self,
+        state: PackagentState,
+        base_mode: str,
+    ) -> Dict[str, str]:
+        for attempt in range(2):
+            if base_mode == BASE_MODE_IMPORT:
+                self._ensure_managed_targets(state)
+            else:
+                self._backup_unmanaged_targets_without_import(state)
+            try:
+                return self._activate_targets(state.base_env)
+            except UserFacingError:
+                if attempt == 0 and self._has_unmanaged_targets():
+                    continue
+                raise
+        raise AssertionError("unreachable base target activation retry state")
+
+    def _has_unmanaged_targets(self) -> bool:
+        return any(
+            inspection.kind in UNMANAGED_HOME_KINDS
+            for inspection in self._inspect_targets().values()
+        )
 
     def _preflight_managed_targets(
         self,
