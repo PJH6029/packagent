@@ -89,7 +89,31 @@ Fix:
   - simultaneous live bash shells that switch `codex-with-demo -> base ->
     codex-with-demo` and verify both shells converge;
   - re-init plus backup restore after deleting all old backup roots except the
-    current one.
+    current one;
+  - re-init backup restore where `.agents` is absent from the current backup
+    generation and must stay absent.
+
+## Alternate Worktree Merge
+
+Compared against `/home/top321902/code/packagent-v1-heavy-main`.
+
+Merged:
+
+- `packagent shell init` now bootstraps an initial marker only when the current
+  managed symlinks actually match the recorded active env.
+- The interactive uninstall prompt now describes `backup` as the current init
+  backup snapshots.
+- Added a shell-hook regression that changes the global active-env source while
+  the local shell env is stale.
+- Added Docker coverage for latest-generation missing targets.
+
+Kept from this branch:
+
+- Explicit `current_backup_root` in `state.json` instead of deriving the
+  generation only from the latest matching backup record. This keeps the
+  uninstall generation stable and migratable.
+- `PACKAGENT_BIN` in the rc block and hook wrapper, so fallback executable
+  resolution remains consistent across long-lived shells.
 
 ## Verification
 

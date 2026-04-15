@@ -83,12 +83,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(active_env)
                 return 0
             if args.shell_command == "init":
-                status = manager.status()
-                initial_result = ActivationResult(
-                    env_name=status.active_env,
-                    managed_home_path=status.managed_home_path,
-                    codex_home=status.expected_target,
-                )
+                initial_result = None
+                active_env = manager.shell_active_env()
+                if active_env:
+                    status = manager.status()
+                    initial_result = ActivationResult(
+                        env_name=active_env,
+                        managed_home_path=status.managed_home_path,
+                        codex_home=status.expected_target,
+                    )
                 print(render_shell_init(args.shell, initial_result))
                 return 0
             return 0
@@ -237,7 +240,7 @@ def _resolve_uninstall_restore_source(
     print("packagent was initialized in import mode.", file=sys.stderr)
     print("Choose which data to restore to the default target paths:", file=sys.stderr)
     print("  base:   copy the current base environment", file=sys.stderr)
-    print("  backup: restore the first-run backup snapshots", file=sys.stderr)
+    print("  backup: restore the current init backup snapshots", file=sys.stderr)
     while True:
         print("Restore source [base/backup]: ", end="", file=sys.stderr)
         answer = input().strip().lower()

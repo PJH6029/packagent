@@ -904,6 +904,8 @@ def test_cli_shell_init_bootstraps_base_prompt_state(
     manager: PackagentManager,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    manager.initialize_base("import")
+
     exit_code = main(["shell", "init", "bash"])
     output = capsys.readouterr().out
 
@@ -911,6 +913,18 @@ def test_cli_shell_init_bootstraps_base_prompt_state(
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
     assert "export CODEX_HOME=" not in output
     assert "export CLAUDE_CONFIG_DIR=" not in output
+
+
+def test_cli_shell_init_without_managed_targets_does_not_bootstrap_prompt_state(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(["shell", "init", "bash"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "export PACKAGENT_ACTIVE_ENV='base'" not in output
+    assert not manager.paths.state_file.exists()
 
 
 def test_shell_active_env_tracks_only_consistent_global_activation(

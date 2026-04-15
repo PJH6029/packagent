@@ -346,6 +346,77 @@ _packagent_prompt_command
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("shell_name", ["bash", "zsh"])
+def test_prompt_hook_syncs_marker_from_global_active_env(
+    shell_name: str,
+    tmp_path: Path,
+) -> None:
+    if shell_name == "zsh" and shutil.which("zsh") is None:
+        pytest.skip("zsh is not installed")
+
+    active_file = tmp_path / "active-env.txt"
+    executable = tmp_path / "packagent"
+    executable.write_text(
+        f"""#!/usr/bin/env bash
+if [ "$1" = "shell" ] && [ "${{2-}}" = "active-env" ]; then
+  cat {shlex.quote(str(active_file))}
+  exit 0
+fi
+exit 64
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    script_path = tmp_path / f"sync-marker.{shell_name}"
+    hook = render_shell_init(shell_name)
+
+    if shell_name == "bash":
+        script_path.write_text(
+            f"""
+set -euo pipefail
+export PACKAGENT_BIN={shlex.quote(str(executable))}
+PS1='prompt$ '
+printf 'omx' > {shlex.quote(str(active_file))}
+{hook}
+_packagent_prompt_command
+[ "$PS1" = '(omx) prompt$ ' ] || {{ echo "unexpected prompt after omx: $PS1" >&2; exit 1; }}
+printf 'base' > {shlex.quote(str(active_file))}
+_packagent_prompt_command
+[ "$PS1" = '(base) prompt$ ' ] || {{ echo "unexpected prompt after base: $PS1" >&2; exit 1; }}
+: > {shlex.quote(str(active_file))}
+_packagent_prompt_command
+[ "$PS1" = 'prompt$ ' ] || {{ echo "unexpected prompt after uninstall: $PS1" >&2; exit 1; }}
+""",
+            encoding="utf-8",
+        )
+        command = ["bash", str(script_path)]
+    else:
+        script_path.write_text(
+            f"""
+set -e
+export PACKAGENT_BIN={shlex.quote(str(executable))}
+PROMPT='prompt%# '
+RPROMPT=''
+printf 'omx' > {shlex.quote(str(active_file))}
+{hook}
+_packagent_prompt_command
+[[ "$PROMPT" == '(omx) prompt%# ' ]] || {{ print -u2 -- "unexpected prompt after omx: $PROMPT"; exit 1; }}
+printf 'base' > {shlex.quote(str(active_file))}
+_packagent_prompt_command
+[[ "$PROMPT" == '(base) prompt%# ' ]] || {{ print -u2 -- "unexpected prompt after base: $PROMPT"; exit 1; }}
+: > {shlex.quote(str(active_file))}
+_packagent_prompt_command
+[[ "$PROMPT" == 'prompt%# ' ]] || {{ print -u2 -- "unexpected prompt after uninstall: $PROMPT"; exit 1; }}
+""",
+            encoding="utf-8",
+        )
+        command = ["zsh", "-f", str(script_path)]
+
+    result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_bash_uninstall_wrapper_clears_current_prompt_state(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

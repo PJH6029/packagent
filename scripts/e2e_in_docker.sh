@@ -653,6 +653,27 @@ EOF
   grep -q 'restore_source: backup' /tmp/packagent-latest-backup-uninstall-backup.txt || fail "latest backup uninstall did not report backup restore source"
   grep -q 'latest backup restore marker' "$HOME/.codex/latest-backup-marker.txt" || fail "latest backup restore did not use the current backup root"
 
+  echo "== verify re-init backup restore leaves current-missing targets absent =="
+  local missing_home
+  missing_home="$(mktemp -d)"
+  mkdir -p "$missing_home/.codex" "$missing_home/.agents"
+  cat > "$missing_home/.codex/auth.json" <<'EOF'
+first-codex
+EOF
+  cat > "$missing_home/.agents/first.txt" <<'EOF'
+first-agents
+EOF
+  HOME="$missing_home" packagent init --shell bash --base-mode import --rc-file "$missing_home/.bashrc" >/tmp/packagent-missing-first-init.txt
+  HOME="$missing_home" packagent uninstall --restore-source base --shell bash --rc-file "$missing_home/.bashrc" >/tmp/packagent-missing-first-uninstall.txt
+  rm -rf "$missing_home/.agents"
+  cat > "$missing_home/.codex/auth.json" <<'EOF'
+second-codex
+EOF
+  HOME="$missing_home" packagent init --shell bash --base-mode import --rc-file "$missing_home/.bashrc" >/tmp/packagent-missing-second-init.txt
+  HOME="$missing_home" packagent uninstall --restore-source backup --shell bash --rc-file "$missing_home/.bashrc" >/tmp/packagent-missing-second-uninstall.txt
+  grep -q 'second-codex' "$missing_home/.codex/auth.json" || fail "latest missing-target restore did not restore Codex"
+  assert_path_missing "$missing_home/.agents"
+
   uv tool uninstall packagent
   [ ! -x "$packagent_bin" ] || fail "packagent executable still exists after uninstall"
   unset -f packagent || true
