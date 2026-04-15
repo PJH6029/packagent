@@ -91,15 +91,22 @@ def render_shell_init(shell_name: str, initial_result: ActivationResult | None =
 
 def render_shell_rc_block(shell_name: str) -> str:
     _validate_shell(shell_name)
-    return "\n".join(
-        [
-            INIT_BLOCK_START,
-            "if command -v packagent >/dev/null 2>&1; then",
-            f'  eval "$(packagent shell init {shell_name})"',
-            "fi",
-            INIT_BLOCK_END,
-        ],
-    )
+    lines = [
+        INIT_BLOCK_START,
+        "_packagent_bin=packagent",
+        'if ! command -v "$_packagent_bin" >/dev/null 2>&1; then',
+        "  _packagent_bin=",
+        "fi",
+        'if [ -z "$_packagent_bin" ] && [ -x "$HOME/.local/bin/packagent" ]; then',
+        '  _packagent_bin="$HOME/.local/bin/packagent"',
+        "fi",
+        'if [ -n "$_packagent_bin" ]; then',
+        f'  eval "$("$_packagent_bin" shell init {shell_name})"',
+        "fi",
+        "unset _packagent_bin",
+        INIT_BLOCK_END,
+    ]
+    return "\n".join(lines)
 
 
 def render_activate_commands(shell_name: str, result: ActivationResult) -> str:

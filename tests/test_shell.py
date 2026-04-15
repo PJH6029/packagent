@@ -16,6 +16,7 @@ from packagent.shell import (
     render_activate_commands,
     render_deactivate_commands,
     render_shell_init,
+    render_shell_rc_block,
 )
 
 
@@ -378,6 +379,56 @@ def test_default_rc_path_matches_shell(tmp_path: Path) -> None:
     assert default_rc_path("zsh", tmp_path) == tmp_path / ".zshrc"
 
 
+@pytest.mark.parametrize("shell_name", ["bash", "zsh"])
+def test_shell_rc_block_includes_executable_fallback(shell_name: str) -> None:
+    block = render_shell_rc_block(shell_name)
+
+    assert "_packagent_bin=packagent" in block
+    assert '"$HOME/.local/bin/packagent"' in block
+    assert "/home/" not in block
+    assert f'shell init {shell_name})"' in block
+
+
+@pytest.mark.parametrize("shell_name", ["bash", "zsh"])
+def test_shell_rc_block_can_bootstrap_when_path_is_not_ready(shell_name: str, tmp_path: Path) -> None:
+    if shell_name == "zsh" and shutil.which("zsh") is None:
+        pytest.skip("zsh is not installed")
+
+    executable = tmp_path / "packagent"
+    executable.write_text(
+        """#!/bin/sh
+if [ "$1" = "shell" ] && [ "$2" = "init" ]; then
+  printf "export PACKAGENT_TEST_BOOTSTRAPPED='%s'\\n" "$3"
+  exit 0
+fi
+exit 64
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    home = tmp_path / "home"
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    local_bin.joinpath("packagent").symlink_to(executable)
+    script_path = tmp_path / f"bootstrap.{shell_name}"
+    script_path.write_text(
+        f"""
+set -eu
+HOME={shlex.quote(str(home))}
+PATH=/tmp/packagent-path-not-ready
+{render_shell_rc_block(shell_name)}
+[ "${{PACKAGENT_TEST_BOOTSTRAPPED-}}" = "{shell_name}" ]
+[ -z "${{_packagent_bin+x}}" ]
+""",
+        encoding="utf-8",
+    )
+    command = ["bash", str(script_path)] if shell_name == "bash" else ["zsh", "-f", str(script_path)]
+
+    result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_install_shell_init_writes_managed_block_idempotently(tmp_path: Path) -> None:
     rc_path = tmp_path / ".bashrc"
     rc_path.write_text("export PATH=/tmp/bin:$PATH\n", encoding="utf-8")
@@ -389,7 +440,8 @@ def test_install_shell_init_writes_managed_block_idempotently(tmp_path: Path) ->
     assert first.changed is True
     assert second.changed is False
     assert content.count("# >>> packagent initialize >>>") == 1
-    assert 'eval "$(packagent shell init bash)"' in content
+    assert "shell init bash" in content
+    assert '"$HOME/.local/bin/packagent"' in content
 
 
 def test_remove_shell_init_removes_managed_block_idempotently(tmp_path: Path) -> None:

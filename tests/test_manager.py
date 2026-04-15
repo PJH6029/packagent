@@ -789,7 +789,7 @@ def test_cli_init_writes_detected_shell_rc_file(
 
     assert exit_code == 0
     assert rc_path.exists()
-    assert 'eval "$(packagent shell init bash)"' in rc_path.read_text(encoding="utf-8")
+    assert "shell init bash" in rc_path.read_text(encoding="utf-8")
     assert "==== Initializing packagent ====" in output
     assert "shell: bash" in output
     assert f"rc_file: {rc_path} (updated)" in output
@@ -809,7 +809,7 @@ def test_cli_init_can_target_explicit_rc_file(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert 'eval "$(packagent shell init zsh)"' in rc_path.read_text(encoding="utf-8")
+    assert "shell init zsh" in rc_path.read_text(encoding="utf-8")
     assert "shell: zsh" in output
     assert f"rc_file: {rc_path} (updated)" in output
 
