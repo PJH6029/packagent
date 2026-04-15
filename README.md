@@ -117,10 +117,12 @@ If `CODEX_HOME` is already set, `packagent` manages that Codex path instead of
 instead of `~/.claude`. `packagent` does not export or rewrite those variables
 for you.
 
-On first takeover, existing unmanaged target paths are backed up under
-`~/.packagent-backups`. By default they are imported into the permanent `base`
-env; with `--base-mode fresh`, `base` starts empty after the backup. `base` is
-the fallback environment and cannot be removed.
+On first takeover, existing unmanaged target paths are backed up together under
+one timestamp root, for example
+`~/.packagent-backups/<timestamp>/{.codex,.agents,.claude}`. By default they are
+imported into the permanent `base` env; with `--base-mode fresh`, `base` starts
+empty after the backup. `base` is the fallback environment and cannot be
+removed.
 
 `packagent uninstall` removes the managed shell startup block and replaces the
 managed symlinks with normal user-level paths again. If `init` used import

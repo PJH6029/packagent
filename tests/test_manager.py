@@ -127,6 +127,24 @@ def test_first_activation_preserves_symlinks_when_importing_home(manager: Packag
     assert os.readlink(imported_link) == str(legacy_home / "missing-tool")
 
 
+def test_initialize_base_symlink_backup_uses_target_name(manager: PackagentManager) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    source_home = manager.paths.home / "external-codex"
+    source_home.mkdir()
+    source_home.joinpath("auth.json").write_text("codex", encoding="utf-8")
+    codex_home.symlink_to(source_home)
+
+    manager.initialize_base("import")
+
+    state = manager.load_state()
+    codex_record = next(record for record in state.backups if record.target_key == "codex-home")
+    backup_root = Path(codex_record.backup_path)
+    assert backup_root.joinpath(".codex", "auth.json").read_text(encoding="utf-8") == "codex"
+    assert backup_root.joinpath(".codex.symlink.json").exists()
+    assert not backup_root.joinpath("resolved-home").exists()
+    assert manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
+
+
 @pytest.mark.parametrize(
     ("target_key", "legacy_parts", "content"),
     [
@@ -365,6 +383,15 @@ def test_initialize_base_imports_existing_targets_and_activates_base(manager: Pa
     assert manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").read_text(encoding="utf-8") == "codex"
     assert manager.host.env_target_path(manager.paths, "base", agents_target).joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "agents"
     assert manager.host.env_target_path(manager.paths, "base", claude_target).joinpath(".credentials.json").read_text(encoding="utf-8") == "claude"
+    state = manager.load_state()
+    backup_roots = {record.backup_path for record in state.backups}
+    assert len(backup_roots) == 1
+    backup_root = Path(next(iter(backup_roots)))
+    assert backup_root.parent == manager.paths.backups_root
+    assert backup_root.joinpath(".codex", "auth.json").read_text(encoding="utf-8") == "codex"
+    assert backup_root.joinpath(".agents", "skills", "demo.txt").read_text(encoding="utf-8") == "agents"
+    assert backup_root.joinpath(".claude", ".credentials.json").read_text(encoding="utf-8") == "claude"
+    assert state.envs["base"].imported_from == str(backup_root)
     assert manager.load_state().active_env == "base"
 
 
@@ -400,8 +427,13 @@ def test_initialize_base_fresh_backs_up_existing_targets_without_importing(
     assert not base_agents.joinpath("skills", "demo.txt").exists()
     assert not base_claude.joinpath(".credentials.json").exists()
     assert not base_claude.joinpath("settings.json").exists()
-    backups = list(manager.paths.backups_root.iterdir())
-    assert backups
+    backup_roots = {record.backup_path for record in manager.load_state().backups}
+    assert len(backup_roots) == 1
+    backup_root = Path(next(iter(backup_roots)))
+    assert backup_root.parent == manager.paths.backups_root
+    assert backup_root.joinpath(".codex", "auth.json").read_text(encoding="utf-8") == "codex"
+    assert backup_root.joinpath(".agents", "skills", "demo.txt").read_text(encoding="utf-8") == "agents"
+    assert backup_root.joinpath(".claude", ".credentials.json").read_text(encoding="utf-8") == "claude"
     assert any(path.name == "auth.json" for path in manager.paths.backups_root.rglob("*"))
     assert any(path.name == ".credentials.json" for path in manager.paths.backups_root.rglob("*"))
     assert {record.reason for record in manager.load_state().backups} == {"fresh_base_directory"}
@@ -430,13 +462,22 @@ def test_initialize_base_retries_if_unmanaged_home_appears_before_activation(
         paths=PackagentPaths.discover(),
         backend=LateUnmanagedHomeBackend(),
     )
+    agents_target = manager.host.target_by_key("agents-home")
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    agents_home.joinpath("skills").mkdir(parents=True)
+    agents_home.joinpath("skills", "demo.txt").write_text("agents", encoding="utf-8")
 
     result = manager.initialize_base("import")
 
     codex_home = manager.host.managed_home_path(manager.paths)
+    backup_roots = {record.backup_path for record in manager.load_state().backups}
+    backup_root = Path(next(iter(backup_roots)))
+    assert len(backup_roots) == 1
     assert result.env_name == "base"
     assert codex_home.is_symlink()
     assert codex_home.resolve() == manager.host.env_home_path(manager.paths, "base")
+    assert backup_root.joinpath(".agents", "skills", "demo.txt").read_text(encoding="utf-8") == "agents"
+    assert backup_root.joinpath(".codex", "late.txt").read_text(encoding="utf-8") == "late"
     assert manager.host.env_home_path(manager.paths, "base").joinpath("late.txt").read_text(encoding="utf-8") == "late"
 
 
@@ -569,6 +610,30 @@ def test_uninstall_backup_restore_uses_recorded_legacy_backup_path(
     assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
     codex_result = next(item for item in result.target_results if item.key == "codex-home")
     assert codex_result.source_path == str(legacy_backup_root / ".codex")
+
+
+def test_uninstall_backup_restore_supports_legacy_symlink_snapshot_path(
+    manager: PackagentManager,
+) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    source_home = manager.paths.home / "external-codex"
+    source_home.mkdir()
+    source_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    codex_home.symlink_to(source_home)
+    manager.initialize_base("fresh")
+
+    state = manager.load_state()
+    codex_record = next(record for record in state.backups if record.target_key == "codex-home")
+    backup_root = Path(codex_record.backup_path)
+    backup_root.joinpath(".codex").rename(backup_root / "resolved-home")
+    backup_root.joinpath(".codex.symlink.json").rename(backup_root / "symlink.json")
+
+    result = manager.uninstall()
+
+    assert result.restore_source == "backup"
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "codex-original"
+    codex_result = next(item for item in result.target_results if item.key == "codex-home")
+    assert codex_result.source_path == str(backup_root / "resolved-home")
 
 
 def test_doctor_fix_migrates_legacy_backup_directory(

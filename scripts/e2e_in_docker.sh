@@ -177,6 +177,14 @@ EOF
   grep -q 'source /home/tester/.bashrc' /tmp/packagent-init.txt || fail "packagent init did not report source command"
   grep -q 'shell init bash' "$HOME/.bashrc" || fail "bashrc was not updated by packagent init"
   grep -Fq '"$HOME/.local/bin/packagent"' "$HOME/.bashrc" || fail "bashrc missing local packagent fallback"
+  local import_backup_count
+  import_backup_count="$(find "$HOME/.packagent-backups" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+  [ "$import_backup_count" -eq 1 ] || fail "import mode should create one grouped backup root, got $import_backup_count"
+  local import_backup_root
+  import_backup_root="$(find "$HOME/.packagent-backups" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  assert_path_exists "$import_backup_root/.codex/packagent-e2e-codex-seed.txt"
+  assert_path_exists "$import_backup_root/.agents/skills/legacy-skill/SKILL.md"
+  assert_path_exists "$import_backup_root/.claude/packagent-e2e-claude-seed.json"
   echo "== verify bash rc can be sourced repeatedly =="
   bash --rcfile "$HOME/.bashrc" -i -c \
     'source "$HOME/.bashrc"; source "$HOME/.bashrc"; _packagent_prompt_command; [ "${PACKAGENT_ACTIVE_ENV:-}" = "base" ]' \
@@ -439,8 +447,13 @@ EOF
   assert_path_missing "$fresh_home/.packagent/envs/base/.codex/auth.json"
   assert_path_missing "$fresh_home/.packagent/envs/base/.codex/history.jsonl"
   assert_path_missing "$fresh_home/.packagent/envs/base/.claude/.credentials.json"
-  find "$fresh_home/.packagent-backups" -name auth.json -print -quit | grep -q . || fail "fresh mode did not back up Codex auth"
-  find "$fresh_home/.packagent-backups" -name .credentials.json -print -quit | grep -q . || fail "fresh mode did not back up Claude auth"
+  local fresh_backup_count
+  fresh_backup_count="$(find "$fresh_home/.packagent-backups" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+  [ "$fresh_backup_count" -eq 1 ] || fail "fresh mode should create one grouped backup root, got $fresh_backup_count"
+  local fresh_backup_root
+  fresh_backup_root="$(find "$fresh_home/.packagent-backups" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  assert_path_exists "$fresh_backup_root/.codex/auth.json"
+  assert_path_exists "$fresh_backup_root/.claude/.credentials.json"
   HOME="$fresh_home" packagent uninstall --shell bash --rc-file "$fresh_home/.bashrc" >/tmp/packagent-fresh-uninstall.txt
   grep -q 'restore_source: backup' /tmp/packagent-fresh-uninstall.txt || fail "fresh uninstall did not use backup restore source"
   [ ! -L "$fresh_home/.codex" ] || fail "fresh uninstall left Codex home as a symlink"

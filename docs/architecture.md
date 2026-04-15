@@ -42,15 +42,18 @@ When `packagent init` or first activation manages homes for the first time,
 home path (`CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude`):
 
 - missing path: create a managed symlink
-- unmanaged directory: move it into `~/.packagent-backups/<timestamp>/`, import it into
-  the matching `base` target, then replace the managed target path
+- unmanaged directory: move it into
+  `~/.packagent-backups/<timestamp>/<target-home-name>`, import it into the
+  matching `base` target, then replace the managed target path
 - unmanaged symlink: snapshot the resolved target into a backup, import that
   snapshot into the matching `base` target, then replace the managed target path
 - already managed symlink: reconcile state and continue
 
-Activation preflights all targets before writing symlinks, then repoints all
-managed target paths to the selected environment. The deactivated state is
-always `base`.
+Activation preflights all targets before writing symlinks, then backs up all
+unmanaged targets from the same takeover pass under one timestamp root, for
+example `~/.packagent-backups/<timestamp>/{.codex,.agents,.claude}`. It then
+repoints all managed target paths to the selected environment. The deactivated
+state is always `base`.
 
 `packagent init --base-mode fresh` uses the same backup safety path, but does
 not import the backed-up files into `base`. Interactive `init` prompts for the

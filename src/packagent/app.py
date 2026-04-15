@@ -445,22 +445,29 @@ class PackagentManager:
             target_statuses=target_statuses,
         )
 
-    def _ensure_managed_targets(self, state: PackagentState) -> None:
+    def _ensure_managed_targets(
+        self,
+        state: PackagentState,
+        backup_root: Optional[Path] = None,
+    ) -> Optional[Path]:
         inspections = self._inspect_targets()
         self._preflight_managed_targets(inspections)
+        backup_root = self._backup_root_for_inspections(inspections, backup_root)
         for target in self.host.targets:
-            self._ensure_managed_target(state, target, inspections[target.key])
+            self._ensure_managed_target(state, target, inspections[target.key], backup_root)
+        return backup_root
 
     def _prepare_and_activate_base_targets(
         self,
         state: PackagentState,
         base_mode: str,
     ) -> Dict[str, str]:
+        backup_root: Optional[Path] = None
         for attempt in range(2):
             if base_mode == BASE_MODE_IMPORT:
-                self._ensure_managed_targets(state)
+                backup_root = self._ensure_managed_targets(state, backup_root)
             else:
-                self._backup_unmanaged_targets_without_import(state)
+                backup_root = self._backup_unmanaged_targets_without_import(state, backup_root)
             try:
                 return self._activate_targets(state.base_env)
             except UserFacingError:
@@ -499,6 +506,7 @@ class PackagentManager:
         state: PackagentState,
         target: ManagedTarget,
         inspection: HomeInspection,
+        backup_root: Optional[Path],
     ) -> None:
         if inspection.kind == HOME_KIND_MISSING:
             return
@@ -510,27 +518,44 @@ class PackagentManager:
                 self._reconcile_managed_state(state, inspection.managed_env)
             return
         if inspection.kind == HOME_KIND_UNMANAGED_DIRECTORY:
-            self._import_directory_target(state, target)
+            self._import_directory_target(state, target, self._require_backup_root(backup_root))
             return
         if inspection.kind == HOME_KIND_UNMANAGED_SYMLINK:
-            self._import_symlink_target(state, target, inspection)
+            self._import_symlink_target(
+                state,
+                target,
+                inspection,
+                self._require_backup_root(backup_root),
+            )
             return
         if inspection.kind == HOME_KIND_UNMANAGED_FILE:
-            self._backup_file_target(state, target)
+            self._backup_file_target(state, target, self._require_backup_root(backup_root))
             return
         raise UserFacingError(f"cannot handle home state '{inspection.kind}'")
 
-    def _backup_unmanaged_targets_without_import(self, state: PackagentState) -> None:
+    def _backup_unmanaged_targets_without_import(
+        self,
+        state: PackagentState,
+        backup_root: Optional[Path] = None,
+    ) -> Optional[Path]:
         inspections = self._inspect_targets()
         self._preflight_managed_targets(inspections, action="back up")
+        backup_root = self._backup_root_for_inspections(inspections, backup_root)
         for target in self.host.targets:
-            self._backup_unmanaged_target_without_import(state, target, inspections[target.key])
+            self._backup_unmanaged_target_without_import(
+                state,
+                target,
+                inspections[target.key],
+                backup_root,
+            )
+        return backup_root
 
     def _backup_unmanaged_target_without_import(
         self,
         state: PackagentState,
         target: ManagedTarget,
         inspection: HomeInspection,
+        backup_root: Optional[Path],
     ) -> None:
         if inspection.kind == HOME_KIND_MISSING:
             return
@@ -542,15 +567,42 @@ class PackagentManager:
                 self._reconcile_managed_state(state, inspection.managed_env)
             return
         if inspection.kind == HOME_KIND_UNMANAGED_DIRECTORY:
-            self._backup_directory_target_without_import(state, target)
+            self._backup_directory_target_without_import(
+                state,
+                target,
+                self._require_backup_root(backup_root),
+            )
             return
         if inspection.kind == HOME_KIND_UNMANAGED_SYMLINK:
-            self._backup_symlink_target_without_import(state, target, inspection)
+            self._backup_symlink_target_without_import(
+                state,
+                target,
+                inspection,
+                self._require_backup_root(backup_root),
+            )
             return
         if inspection.kind == HOME_KIND_UNMANAGED_FILE:
-            self._backup_file_target_without_import(state, target)
+            self._backup_file_target_without_import(
+                state,
+                target,
+                self._require_backup_root(backup_root),
+            )
             return
         raise UserFacingError(f"cannot handle home state '{inspection.kind}'")
+
+    def _backup_root_for_inspections(
+        self,
+        inspections: Dict[str, HomeInspection],
+        backup_root: Optional[Path],
+    ) -> Optional[Path]:
+        if any(inspection.kind in UNMANAGED_HOME_KINDS for inspection in inspections.values()):
+            return backup_root or self._allocate_backup_dir()
+        return backup_root
+
+    def _require_backup_root(self, backup_root: Optional[Path]) -> Path:
+        if backup_root is None:
+            raise AssertionError("missing backup root for unmanaged target")
+        return backup_root
 
     def _reconcile_managed_state(self, state: PackagentState, managed_env: Optional[str]) -> None:
         if not managed_env:
@@ -687,12 +739,21 @@ class PackagentManager:
 
     def _backup_snapshot_path(self, record: BackupRecord, target: ManagedTarget) -> Path:
         backup_root = Path(record.backup_path)
+        target_snapshot = backup_root / target.home_dir_name
         if record.reason.endswith("_directory"):
-            return backup_root / target.home_dir_name
+            return target_snapshot
         if record.reason.endswith("_symlink"):
-            return backup_root / "resolved-home"
+            legacy_snapshot = backup_root / "resolved-home"
+            legacy_exists = legacy_snapshot.exists() or legacy_snapshot.is_symlink()
+            if target_snapshot.exists() or target_snapshot.is_symlink() or not legacy_exists:
+                return target_snapshot
+            return legacy_snapshot
         if record.reason.endswith("_file"):
-            return backup_root / "unexpected-home-file"
+            legacy_snapshot = backup_root / "unexpected-home-file"
+            legacy_exists = legacy_snapshot.exists() or legacy_snapshot.is_symlink()
+            if target_snapshot.exists() or target_snapshot.is_symlink() or not legacy_exists:
+                return target_snapshot
+            return legacy_snapshot
         raise UserFacingError(f"unsupported backup reason '{record.reason}'")
 
     def _stage_uninstall_plans(self, plans: List[_TargetRestorePlan]) -> None:
@@ -756,10 +817,14 @@ class PackagentManager:
                     remove_path(plan.staging_path)
         return target_results
 
-    def _import_directory_target(self, state: PackagentState, target: ManagedTarget) -> None:
+    def _import_directory_target(
+        self,
+        state: PackagentState,
+        target: ManagedTarget,
+        backup_root: Path,
+    ) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
-        backup_root = self._allocate_backup_dir()
-        backup_home = backup_root / target.home_dir_name
+        backup_home = self._target_backup_path(backup_root, target)
         shutil.move(str(home_path), str(backup_home))
         self._replace_base_target_with_snapshot(target, backup_home)
         state.backups.append(
@@ -777,10 +842,10 @@ class PackagentManager:
         self,
         state: PackagentState,
         target: ManagedTarget,
+        backup_root: Path,
     ) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
-        backup_root = self._allocate_backup_dir()
-        backup_home = backup_root / target.home_dir_name
+        backup_home = self._target_backup_path(backup_root, target)
         shutil.move(str(home_path), str(backup_home))
         state.backups.append(
             BackupRecord(
@@ -798,6 +863,7 @@ class PackagentManager:
         state: PackagentState,
         target: ManagedTarget,
         inspection: HomeInspection,
+        backup_root: Path,
     ) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
         if not inspection.resolved_target:
@@ -807,11 +873,10 @@ class PackagentManager:
             raise UserFacingError(
                 f"cannot import unmanaged symlink at {home_path}; resolved target is not a directory",
             )
-        backup_root = self._allocate_backup_dir()
-        snapshot_dir = backup_root / "resolved-home"
+        snapshot_dir = self._target_backup_path(backup_root, target)
         copy_directory(resolved_target, snapshot_dir)
         write_json(
-            backup_root / "symlink.json",
+            self._target_symlink_metadata_path(backup_root, target),
             {
                 "created_at": utc_now_iso(),
                 "original_home": str(home_path),
@@ -838,6 +903,7 @@ class PackagentManager:
         state: PackagentState,
         target: ManagedTarget,
         inspection: HomeInspection,
+        backup_root: Path,
     ) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
         if not inspection.resolved_target:
@@ -847,11 +913,10 @@ class PackagentManager:
             raise UserFacingError(
                 f"cannot back up unmanaged symlink at {home_path}; resolved target is not a directory",
             )
-        backup_root = self._allocate_backup_dir()
-        snapshot_dir = backup_root / "resolved-home"
+        snapshot_dir = self._target_backup_path(backup_root, target)
         copy_directory(resolved_target, snapshot_dir)
         write_json(
-            backup_root / "symlink.json",
+            self._target_symlink_metadata_path(backup_root, target),
             {
                 "created_at": utc_now_iso(),
                 "original_home": str(home_path),
@@ -872,10 +937,14 @@ class PackagentManager:
         )
         state.init_base_mode = BASE_MODE_FRESH
 
-    def _backup_file_target(self, state: PackagentState, target: ManagedTarget) -> None:
+    def _backup_file_target(
+        self,
+        state: PackagentState,
+        target: ManagedTarget,
+        backup_root: Path,
+    ) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
-        backup_root = self._allocate_backup_dir()
-        shutil.move(str(home_path), str(backup_root / "unexpected-home-file"))
+        shutil.move(str(home_path), str(self._target_backup_path(backup_root, target)))
         state.backups.append(
             BackupRecord(
                 created_at=utc_now_iso(),
@@ -887,10 +956,14 @@ class PackagentManager:
         )
         state.init_base_mode = BASE_MODE_IMPORT
 
-    def _backup_file_target_without_import(self, state: PackagentState, target: ManagedTarget) -> None:
+    def _backup_file_target_without_import(
+        self,
+        state: PackagentState,
+        target: ManagedTarget,
+        backup_root: Path,
+    ) -> None:
         home_path = self.host.managed_target_path(self.paths, target)
-        backup_root = self._allocate_backup_dir()
-        shutil.move(str(home_path), str(backup_root / "unexpected-home-file"))
+        shutil.move(str(home_path), str(self._target_backup_path(backup_root, target)))
         state.backups.append(
             BackupRecord(
                 created_at=utc_now_iso(),
@@ -901,6 +974,12 @@ class PackagentManager:
             ),
         )
         state.init_base_mode = BASE_MODE_FRESH
+
+    def _target_backup_path(self, backup_root: Path, target: ManagedTarget) -> Path:
+        return backup_root / target.home_dir_name
+
+    def _target_symlink_metadata_path(self, backup_root: Path, target: ManagedTarget) -> Path:
+        return backup_root / f"{target.home_dir_name}.symlink.json"
 
     def _replace_base_target_with_snapshot(self, target: ManagedTarget, snapshot_dir: Path) -> None:
         base_target = self.host.env_target_path(self.paths, "base", target)
