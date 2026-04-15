@@ -81,6 +81,7 @@ class PackagentState:
     manager_name: str = "packagent"
     last_link_target: Optional[str] = None
     init_base_mode: Optional[str] = None
+    current_backup_root: Optional[str] = None
     envs: Dict[str, EnvMetadata] = field(default_factory=dict)
     backups: List[BackupRecord] = field(default_factory=list)
     managed_targets: Dict[str, ManagedTargetState] = field(default_factory=dict)
@@ -109,6 +110,7 @@ class PackagentState:
             manager_name=str(data.get("manager_name", "packagent")),
             last_link_target=str(data["last_link_target"]) if data.get("last_link_target") else None,
             init_base_mode=str(data["init_base_mode"]) if data.get("init_base_mode") else None,
+            current_backup_root=str(data["current_backup_root"]) if data.get("current_backup_root") else None,
             envs=envs,
             backups=backups,
             managed_targets=managed_targets,

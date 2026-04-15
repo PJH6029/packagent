@@ -39,9 +39,24 @@ prepare_prompt_framework() {
   }
 }
 
+write_prompt_active_env_fake() {
+  local path="$1"
+  cat > "$path" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "shell" ] && [ "${2:-}" = "active-env" ]; then
+  printf '%s\n' "${PACKAGENT_ACTIVE_ENV:-}"
+  exit 0
+fi
+exit 64
+EOF
+  chmod +x "$path"
+}
+
 run_real_prompt_framework_tests() {
   local omb_dir="/tmp/packagent-real-oh-my-bash"
   local omz_dir="/tmp/packagent-real-oh-my-zsh"
+  local prompt_fake_bin="/tmp/packagent-real-prompt-active-env"
+  write_prompt_active_env_fake "$prompt_fake_bin"
 
   prepare_prompt_framework \
     "Oh My Bash" \
@@ -53,7 +68,7 @@ run_real_prompt_framework_tests() {
     "$omz_dir"
 
   echo "== verify real oh-my-bash powerline prompt =="
-  OSH="$omb_dir" bash --norc -i -c '
+  PACKAGENT_BIN="$prompt_fake_bin" OSH="$omb_dir" bash --norc -i -c '
     set +u
     set -e
     OSH_THEME=powerline
@@ -61,9 +76,9 @@ run_real_prompt_framework_tests() {
     aliases=()
     plugins=()
     source "$OSH/oh-my-bash.sh"
-    PACKAGENT_ACTIVE_ENV=base
+    export PACKAGENT_ACTIVE_ENV=base
     eval "$(packagent shell init bash)"
-    PACKAGENT_ACTIVE_ENV=codex-omx
+    export PACKAGENT_ACTIVE_ENV=codex-omx
     eval "$PROMPT_COMMAND"
     case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
       *"_omb_util_prompt_command_hook"*) ;;
@@ -87,14 +102,14 @@ run_real_prompt_framework_tests() {
   }
 
   echo "== verify real oh-my-zsh prompt composition =="
-  ZSH="$omz_dir" zsh -fic '
+  PACKAGENT_BIN="$prompt_fake_bin" ZSH="$omz_dir" zsh -fic '
     unsetopt nounset 2>/dev/null || true
     ZSH_THEME=agnoster
     plugins=()
     source "$ZSH/oh-my-zsh.sh" || exit 1
-    PACKAGENT_ACTIVE_ENV=base
+    export PACKAGENT_ACTIVE_ENV=base
     eval "$(packagent shell init zsh)" || exit 1
-    PACKAGENT_ACTIVE_ENV=codex-omx
+    export PACKAGENT_ACTIVE_ENV=codex-omx
     _packagent_prompt_command
     [ "$(packagent_prompt_info)" = "(codex-omx) " ] || exit 1
     case "$PROMPT" in
@@ -185,6 +200,8 @@ EOF
   assert_path_exists "$import_backup_root/.codex/packagent-e2e-codex-seed.txt"
   assert_path_exists "$import_backup_root/.agents/skills/legacy-skill/SKILL.md"
   assert_path_exists "$import_backup_root/.claude/packagent-e2e-claude-seed.json"
+  local prompt_fake_bin="/tmp/packagent-prompt-active-env"
+  write_prompt_active_env_fake "$prompt_fake_bin"
   echo "== verify bash rc can be sourced repeatedly =="
   bash --rcfile "$HOME/.bashrc" -i -c \
     'source "$HOME/.bashrc"; source "$HOME/.bashrc"; _packagent_prompt_command; [ "${PACKAGENT_ACTIVE_ENV:-}" = "base" ]' \
@@ -193,7 +210,7 @@ EOF
     fail "bashrc repeated source failed"
   }
   echo "== verify oh-my-bash style prompt composition =="
-  bash -lc '
+  PACKAGENT_BIN="$prompt_fake_bin" bash -lc '
     set -euo pipefail
     _omb_util_prompt_command=()
     _omb_util_add_prompt_command() {
@@ -214,7 +231,7 @@ EOF
       PS1="theme$ "
     }
     _omb_util_add_prompt_command _omb_theme_PROMPT_COMMAND
-    PACKAGENT_ACTIVE_ENV=base
+    export PACKAGENT_ACTIVE_ENV=base
     eval "$(packagent shell init bash)"
     [ "${PROMPT_COMMAND-}" = "_omb_util_prompt_command_hook" ]
     [ "${_omb_util_prompt_command[0]}" = "_omb_theme_PROMPT_COMMAND" ]
@@ -226,7 +243,7 @@ EOF
     fail "oh-my-bash style prompt composition failed"
   }
   echo "== verify oh-my-bash powerline prompt segment =="
-  bash -lc '
+  PACKAGENT_BIN="$prompt_fake_bin" bash -lc '
     set -euo pipefail
     _omb_util_prompt_command=()
     _omb_util_add_prompt_command() {
@@ -260,7 +277,7 @@ EOF
       done
     }
     _omb_util_add_prompt_command _omb_theme_PROMPT_COMMAND
-    PACKAGENT_ACTIVE_ENV=base
+    export PACKAGENT_ACTIVE_ENV=base
     eval "$(packagent shell init bash)"
     [ "$POWERLINE_PROMPT" = "user_info scm packagent cwd" ]
     _omb_util_prompt_command_hook
@@ -276,20 +293,20 @@ EOF
     fail "oh-my-bash powerline prompt segment failed"
   }
   echo "== verify zsh prompt hook composition =="
-  zsh -fc '
+  PACKAGENT_BIN="$prompt_fake_bin" zsh -fc '
     set -e
     PROMPT="theme%# "
     _theme_precmd() {
       PROMPT="theme%# "
     }
     precmd_functions=(_theme_precmd)
-    PACKAGENT_ACTIVE_ENV=base
+    export PACKAGENT_ACTIVE_ENV=base
     eval "$(packagent shell init zsh)"
     _theme_precmd
     _packagent_prompt_command
     [ "$PROMPT" = "(base) theme%# " ]
     [ "$(packagent_prompt_info)" = "(base) " ]
-    PACKAGENT_ACTIVE_ENV=work
+    export PACKAGENT_ACTIVE_ENV=work
     _theme_precmd
     _packagent_prompt_command
     [ "$PROMPT" = "(work) theme%# " ]
@@ -297,12 +314,12 @@ EOF
       PROMPT="theme%# "
       RPROMPT="conda kube"
     }
-    PACKAGENT_ACTIVE_ENV=base
+    export PACKAGENT_ACTIVE_ENV=base
     _right_theme_precmd
     _packagent_prompt_command
     [ "$PROMPT" = "theme%# " ]
     [ "$RPROMPT" = "(base) conda kube" ]
-    PACKAGENT_ACTIVE_ENV=work
+    export PACKAGENT_ACTIVE_ENV=work
     _right_theme_precmd
     _packagent_prompt_command
     [ "$PROMPT" = "theme%# " ]
@@ -321,6 +338,101 @@ EOF
   echo "== create and activate first env =="
   packagent create -n codex-with-demo
   packagent activate codex-with-demo
+
+  echo "== verify simultaneous shell prompt sync =="
+  python3 - <<'PY'
+import os
+import pty
+import select
+import subprocess
+import time
+
+
+class Shell:
+    counter = 0
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.master, slave = pty.openpty()
+        self.process = subprocess.Popen(
+            ["bash", "--rcfile", os.path.expanduser("~/.bashrc"), "-i"],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            close_fds=True,
+        )
+        os.close(slave)
+        time.sleep(0.4)
+        self._read_available()
+
+    def _read_available(self, timeout: float = 0.2) -> str:
+        chunks = []
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            readable, _, _ = select.select([self.master], [], [], 0.05)
+            if not readable:
+                continue
+            data = os.read(self.master, 65535)
+            if not data:
+                break
+            chunks.append(data.decode(errors="replace"))
+        return "".join(chunks)
+
+    def run(self, command: str, timeout: float = 10.0) -> str:
+        Shell.counter += 1
+        marker = f"__PACKAGENT_E2E_{Shell.counter}__"
+        os.write(
+            self.master,
+            (command + f"\nprintf '\\n{marker}:%s\\n' \"$?\"\n").encode(),
+        )
+        output = ""
+        deadline = time.time() + timeout
+        while marker not in output and time.time() < deadline:
+            readable, _, _ = select.select([self.master], [], [], 0.1)
+            if readable:
+                output += os.read(self.master, 65535).decode(errors="replace")
+        output += self._read_available()
+        if marker not in output:
+            raise AssertionError(f"{self.name} timed out running {command!r}:\n{output}")
+        if f"{marker}:0" not in output:
+            raise AssertionError(f"{self.name} failed running {command!r}:\n{output}")
+        return output
+
+    def close(self) -> None:
+        if self.process.poll() is None:
+            try:
+                os.write(self.master, b"exit\n")
+                self.process.wait(timeout=2)
+            except Exception:
+                self.process.terminate()
+        os.close(self.master)
+
+
+def assert_env(shell: Shell, expected: str) -> None:
+    output = shell.run(
+        "_packagent_prompt_command; "
+        "printf 'PROMPT_ENV:%s:%s\\n' "
+        "\"${PACKAGENT_ACTIVE_ENV-}\" "
+        "\"$(packagent_prompt_info 2>/dev/null || true)\"",
+    )
+    expected_line = f"PROMPT_ENV:{expected}:({expected}) "
+    if expected_line not in output:
+        raise AssertionError(f"expected {expected_line!r} in {shell.name} output:\n{output}")
+
+
+s1 = Shell("shell1")
+s2 = Shell("shell2")
+try:
+    assert_env(s1, "codex-with-demo")
+    assert_env(s2, "codex-with-demo")
+    s2.run("packagent activate base")
+    assert_env(s1, "base")
+    s1.run("packagent activate codex-with-demo")
+    assert_env(s2, "codex-with-demo")
+finally:
+    s1.close()
+    s2.close()
+PY
 
   local root="$HOME/.packagent"
   local base_home="$root/envs/base/.codex"
@@ -517,6 +629,29 @@ EOF
   packagent uninstall --restore-source base --shell bash >/tmp/packagent-reuninstall.txt
   grep -q 'restore_source: base' /tmp/packagent-reuninstall.txt || fail "second uninstall did not report base restore source"
   [ ! -L "$HOME/.codex" ] || fail "second uninstall left Codex home as a symlink"
+
+  echo "== verify re-init backup restore ignores removed old backup roots =="
+  packagent init --shell bash --base-mode import >/tmp/packagent-latest-backup-init-1.txt
+  source "$HOME/.bashrc"
+  packagent create -n latest-backup --clone base >/tmp/packagent-latest-backup-create.txt
+  packagent uninstall --restore-source base --shell bash >/tmp/packagent-latest-backup-uninstall-base.txt
+  cat > "$HOME/.codex/latest-backup-marker.txt" <<'EOF'
+latest backup restore marker
+EOF
+  packagent init --shell bash --base-mode import >/tmp/packagent-latest-backup-init-2.txt
+  local current_backup_root
+  current_backup_root="$(jq -r '.current_backup_root' "$HOME/.packagent/state.json")"
+  [ -n "$current_backup_root" ] && [ "$current_backup_root" != "null" ] || fail "current backup root was not recorded"
+  while IFS= read -r backup_root; do
+    if [ "$backup_root" != "$current_backup_root" ]; then
+      rm -rf "$backup_root"
+    fi
+  done < <(find "$HOME/.packagent-backups" -mindepth 1 -maxdepth 1 -type d | sort)
+  source "$HOME/.bashrc"
+  packagent activate latest-backup
+  packagent uninstall --restore-source backup --shell bash >/tmp/packagent-latest-backup-uninstall-backup.txt
+  grep -q 'restore_source: backup' /tmp/packagent-latest-backup-uninstall-backup.txt || fail "latest backup uninstall did not report backup restore source"
+  grep -q 'latest backup restore marker' "$HOME/.codex/latest-backup-marker.txt" || fail "latest backup restore did not use the current backup root"
 
   uv tool uninstall packagent
   [ ! -x "$packagent_bin" ] || fail "packagent executable still exists after uninstall"

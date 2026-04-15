@@ -27,6 +27,7 @@ def test_state_serialization_round_trip() -> None:
         managed_root="/tmp/home/.packagent",
         last_link_target="/tmp/home/.packagent/envs/work/.codex",
         init_base_mode="import",
+        current_backup_root="/tmp/home/.packagent/backups/20260402T000000Z",
         envs={
             "base": EnvMetadata(
                 name="base",

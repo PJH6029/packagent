@@ -172,6 +172,26 @@ class PackagentManager:
         state = self._ensure_state()
         return self._build_status_report(state)
 
+    def shell_active_env(self) -> Optional[str]:
+        if not self.paths.state_file.exists():
+            return None
+        try:
+            state = self.load_state()
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return None
+        if state.active_env not in state.envs:
+            return None
+        for target in self.host.targets:
+            inspection = self.backend.inspect(self.paths, self.host, target)
+            if inspection.kind != HOME_KIND_MANAGED:
+                return None
+            expected_target = str(
+                self.backend.expected_target(self.paths, self.host, state.active_env, target),
+            )
+            if inspection.resolved_target != expected_target:
+                return None
+        return state.active_env
+
     def base_init_prompt_needed(self) -> bool:
         with mutation_lock(self.paths):
             self._ensure_state()
@@ -185,6 +205,9 @@ class PackagentManager:
             raise UserFacingError(f"unsupported base mode '{base_mode}'")
         with mutation_lock(self.paths):
             state = self._ensure_state()
+            initial_inspections = self._inspect_targets()
+            if not self._has_any_managed_target(initial_inspections):
+                state.current_backup_root = None
             state.init_base_mode = base_mode
             target_homes = self._prepare_and_activate_base_targets(state, base_mode)
             primary_target = self.host.primary_target()
@@ -232,6 +255,7 @@ class PackagentManager:
             state.active_env = state.base_env
             state.init_base_mode = base_mode
             state.last_link_target = None
+            state.current_backup_root = None
             for target_state in state.managed_targets.values():
                 target_state.last_link_target = None
             self._save_state(state)
@@ -482,6 +506,12 @@ class PackagentManager:
             for inspection in self._inspect_targets().values()
         )
 
+    def _has_any_managed_target(self, inspections: Dict[str, HomeInspection]) -> bool:
+        return any(
+            inspection.kind in {HOME_KIND_MANAGED, HOME_KIND_BROKEN_MANAGED}
+            for inspection in inspections.values()
+        )
+
     def _preflight_managed_targets(
         self,
         inspections: Dict[str, HomeInspection],
@@ -665,6 +695,11 @@ class PackagentManager:
         base_mode: str,
     ) -> List[_TargetRestorePlan]:
         plans: List[_TargetRestorePlan] = []
+        backup_root = (
+            self._backup_root_for_uninstall(state, base_mode)
+            if restore_source == RESTORE_SOURCE_BACKUP
+            else None
+        )
         for target in self.host.targets:
             destination = self.host.managed_target_path(self.paths, target)
             if restore_source == RESTORE_SOURCE_BASE:
@@ -684,7 +719,7 @@ class PackagentManager:
                 )
                 continue
 
-            source_path = self._backup_source_for_target(state, target, base_mode)
+            source_path = self._backup_source_for_target(state, target, base_mode, backup_root)
             if source_path is None:
                 plans.append(
                     _TargetRestorePlan(
@@ -706,15 +741,60 @@ class PackagentManager:
             )
         return plans
 
+    def _backup_root_for_uninstall(
+        self,
+        state: PackagentState,
+        base_mode: str,
+    ) -> Optional[Path]:
+        if state.current_backup_root:
+            current_root = Path(state.current_backup_root)
+            if self._backup_root_has_records(state, base_mode, current_root):
+                return current_root
+        latest_root = self._latest_backup_root(state, base_mode)
+        if latest_root:
+            return latest_root
+        base_metadata = state.envs.get(state.base_env)
+        if (
+            base_mode == BASE_MODE_IMPORT
+            and base_metadata
+            and base_metadata.imported_from
+        ):
+            return Path(base_metadata.imported_from)
+        return None
+
+    def _latest_backup_root(self, state: PackagentState, base_mode: str) -> Optional[Path]:
+        backup_reasons = BACKUP_REASONS_BY_MODE[base_mode]
+        for record in reversed(state.backups):
+            if record.reason in backup_reasons:
+                return Path(record.backup_path)
+        return None
+
+    def _backup_root_has_records(
+        self,
+        state: PackagentState,
+        base_mode: str,
+        backup_root: Path,
+    ) -> bool:
+        backup_reasons = BACKUP_REASONS_BY_MODE[base_mode]
+        return any(
+            record.reason in backup_reasons and Path(record.backup_path) == backup_root
+            for record in state.backups
+        )
+
     def _backup_source_for_target(
         self,
         state: PackagentState,
         target: ManagedTarget,
         base_mode: str,
+        backup_root: Optional[Path],
     ) -> Optional[Path]:
+        if backup_root is None:
+            return None
         backup_reasons = BACKUP_REASONS_BY_MODE[base_mode]
         for record in state.backups:
             if record.reason not in backup_reasons:
+                continue
+            if Path(record.backup_path) != backup_root:
                 continue
             if not self._backup_record_matches_target(record, target):
                 continue
@@ -836,6 +916,7 @@ class PackagentManager:
                 target_key=target.key,
             ),
         )
+        state.current_backup_root = str(backup_root)
         self._mark_base_imported(state, str(backup_root))
 
     def _backup_directory_target_without_import(
@@ -856,6 +937,7 @@ class PackagentManager:
                 target_key=target.key,
             ),
         )
+        state.current_backup_root = str(backup_root)
         state.init_base_mode = BASE_MODE_FRESH
 
     def _import_symlink_target(
@@ -896,6 +978,7 @@ class PackagentManager:
                 target_key=target.key,
             ),
         )
+        state.current_backup_root = str(backup_root)
         self._mark_base_imported(state, str(backup_root))
 
     def _backup_symlink_target_without_import(
@@ -935,6 +1018,7 @@ class PackagentManager:
                 target_key=target.key,
             ),
         )
+        state.current_backup_root = str(backup_root)
         state.init_base_mode = BASE_MODE_FRESH
 
     def _backup_file_target(
@@ -954,6 +1038,7 @@ class PackagentManager:
                 target_key=target.key,
             ),
         )
+        state.current_backup_root = str(backup_root)
         state.init_base_mode = BASE_MODE_IMPORT
 
     def _backup_file_target_without_import(
@@ -973,6 +1058,7 @@ class PackagentManager:
                 target_key=target.key,
             ),
         )
+        state.current_backup_root = str(backup_root)
         state.init_base_mode = BASE_MODE_FRESH
 
     def _target_backup_path(self, backup_root: Path, target: ManagedTarget) -> Path:
@@ -994,7 +1080,7 @@ class PackagentManager:
             host=self.host.name,
             source="imported-home",
             created_at=current_metadata.created_at,
-            imported_from=current_metadata.imported_from or backup_root,
+            imported_from=backup_root,
         )
         state.envs[state.base_env] = base_metadata
         state.init_base_mode = BASE_MODE_IMPORT
@@ -1129,6 +1215,10 @@ class PackagentManager:
             migrated_path = self._migrated_legacy_path(record.backup_path, moved_paths)
             if migrated_path:
                 record.backup_path = migrated_path
+        if state.current_backup_root:
+            migrated_path = self._migrated_legacy_path(state.current_backup_root, moved_paths)
+            if migrated_path:
+                state.current_backup_root = migrated_path
         for metadata in state.envs.values():
             if not metadata.imported_from:
                 continue

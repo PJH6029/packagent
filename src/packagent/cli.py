@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     shell_subparsers = shell_parser.add_subparsers(dest="shell_command", required=True)
     shell_init = shell_subparsers.add_parser("init", help="print a shell hook")
     shell_init.add_argument("shell", choices=SUPPORTED_SHELLS)
+    shell_subparsers.add_parser("active-env", help=argparse.SUPPRESS)
 
     init_parser = subparsers.add_parser("init", help="install shell startup integration")
     init_parser.add_argument("--shell", choices=SUPPORTED_SHELLS)
@@ -76,13 +77,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     manager = PackagentManager()
     try:
         if args.command == "shell":
-            status = manager.status()
-            initial_result = ActivationResult(
-                env_name=status.active_env,
-                managed_home_path=status.managed_home_path,
-                codex_home=status.expected_target,
-            )
-            print(render_shell_init(args.shell, initial_result))
+            if args.shell_command == "active-env":
+                active_env = manager.shell_active_env()
+                if active_env:
+                    print(active_env)
+                return 0
+            if args.shell_command == "init":
+                status = manager.status()
+                initial_result = ActivationResult(
+                    env_name=status.active_env,
+                    managed_home_path=status.managed_home_path,
+                    codex_home=status.expected_target,
+                )
+                print(render_shell_init(args.shell, initial_result))
+                return 0
             return 0
         if args.command == "init":
             return _handle_init(manager, args.shell, args.rc_file, args.base_mode)

@@ -101,10 +101,13 @@ Each environment lives under `~/.packagent/envs/<env>/`:
 Activating an env switches the managed user-level targets to symlinks pointing
 at that env. Only one env is globally active at a time.
 
-The shell hook also exposes the active env in your prompt. Plain bash/zsh get a
-`(<env>)` prefix, zsh themes with an existing right prompt place the marker in
-`RPROMPT`, and Oh My Bash Powerline-style themes get a `[pa] <env>` segment. For
-custom themes, use `packagent_prompt_info` or `PACKAGENT_PROMPT_MODIFIER`.
+The shell hook also exposes the globally active env in your prompt. Plain
+bash/zsh get a `(<env>)` prefix, zsh themes with an existing right prompt place
+the marker in `RPROMPT`, and Oh My Bash Powerline-style themes get a `[pa]
+<env>` segment. Each prompt refresh reconciles with the managed symlinks, so
+other open shells update after another shell activates, deactivates, or
+uninstalls packagent. For custom themes, use `packagent_prompt_info` or
+`PACKAGENT_PROMPT_MODIFIER`.
 
 By default, `packagent` manages:
 
@@ -129,7 +132,9 @@ managed symlinks with normal user-level paths again. If `init` used import
 mode, interactive uninstall asks whether to restore from the copied `base` env
 or the original backup snapshots; non-interactive uninstall requires
 `--restore-source base` or `--restore-source backup`. If `init` used fresh
-mode, uninstall restores backup snapshots. `~/.packagent` and
+mode, uninstall restores backup snapshots. Backup restore uses the backup root
+from the current init/takeover generation, so older retained backups are not
+used after a re-init. `~/.packagent` and
 `~/.packagent-backups` are kept as recoverable data; remove the executable
 separately with `uv tool uninstall packagent`.
 

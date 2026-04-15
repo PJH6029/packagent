@@ -20,9 +20,27 @@ from packagent.shell import (
 )
 
 
+def _write_active_env_packagent(tmp_path: Path) -> Path:
+    executable = tmp_path / "packagent"
+    executable.write_text(
+        """#!/usr/bin/env bash
+if [ "$1" = "shell" ] && [ "${2-}" = "active-env" ]; then
+  printf '%s\\n' "${PACKAGENT_ACTIVE_ENV-}"
+  exit 0
+fi
+exit 64
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    return executable
+
+
 def test_bash_shell_init_contains_wrapper_and_prompt_hook() -> None:
     script = render_shell_init("bash")
     assert 'packagent() {' in script
+    assert "_packagent_sync_active_env" in script
+    assert "shell active-env" in script
     assert 'PROMPT_COMMAND="_packagent_prompt_command"' not in script
     assert "_omb_util_add_prompt_command _packagent_prompt_command" in script
     assert "packagent_prompt_info()" in script
@@ -34,11 +52,13 @@ def test_bash_shell_init_contains_wrapper_and_prompt_hook() -> None:
 def test_bash_shell_init_is_safe_to_source_repeatedly(tmp_path: Path) -> None:
     prompt_output = tmp_path / "prompt-output.txt"
     script_path = tmp_path / "double-source.bash"
+    executable = _write_active_env_packagent(tmp_path)
     hook = render_shell_init("bash")
     script_path.write_text(
         f"""
 set -euo pipefail
 export PACKAGENT_TEST_PROMPT_OUTPUT={shlex.quote(str(prompt_output))}
+export PACKAGENT_BIN={shlex.quote(str(executable))}
 PS1='prompt$ '
 PROMPT_COMMAND='printf original >> "$PACKAGENT_TEST_PROMPT_OUTPUT"'
 {hook}
@@ -50,7 +70,7 @@ esac
 case "${{PROMPT_COMMAND-}}" in
   *"_packagent_prompt_command;_packagent_prompt_command"*) echo "duplicate prompt command: $PROMPT_COMMAND" >&2; exit 1 ;;
 esac
-PACKAGENT_ACTIVE_ENV=base
+export PACKAGENT_ACTIVE_ENV=base
 eval "$PROMPT_COMMAND"
 case "$PS1" in
   "(base) "*) ;;
@@ -76,18 +96,20 @@ printf "%s" "$(packagent_prompt_info)" > "{prompt_output}.modifier"
 def test_bash_shell_init_appends_to_array_prompt_command(tmp_path: Path) -> None:
     prompt_output = tmp_path / "array-prompt-output.txt"
     script_path = tmp_path / "array-prompt.bash"
+    executable = _write_active_env_packagent(tmp_path)
     hook = render_shell_init("bash")
     script_path.write_text(
         f"""
 set -euo pipefail
 export PACKAGENT_TEST_PROMPT_OUTPUT={shlex.quote(str(prompt_output))}
+export PACKAGENT_BIN={shlex.quote(str(executable))}
 PS1='prompt$ '
 PROMPT_COMMAND=('printf first >> "$PACKAGENT_TEST_PROMPT_OUTPUT"' 'printf second >> "$PACKAGENT_TEST_PROMPT_OUTPUT"')
 {hook}
 {hook}
 [ "${{#PROMPT_COMMAND[@]}}" -eq 3 ]
 [ "${{PROMPT_COMMAND[2]}}" = "_packagent_prompt_command" ]
-PACKAGENT_ACTIVE_ENV=work
+export PACKAGENT_ACTIVE_ENV=work
 for command in "${{PROMPT_COMMAND[@]}}"; do
   eval "$command"
 done
@@ -112,19 +134,21 @@ esac
 
 def test_bash_shell_init_does_not_duplicate_after_conda_prefix(tmp_path: Path) -> None:
     script_path = tmp_path / "conda-prefix.bash"
+    executable = _write_active_env_packagent(tmp_path)
     hook = render_shell_init("bash")
     script_path.write_text(
         f"""
 set -euo pipefail
+PACKAGENT_BIN={shlex.quote(str(executable))}
 PS1='prompt$ '
-PACKAGENT_ACTIVE_ENV=base
+export PACKAGENT_ACTIVE_ENV=base
 {hook}
 _packagent_prompt_command
 [ "$PS1" = '(base) prompt$ ' ]
 PS1="(llm) $PS1"
 _packagent_prompt_command
 [ "$PS1" = '(base) (llm) prompt$ ' ]
-PACKAGENT_ACTIVE_ENV=work
+export PACKAGENT_ACTIVE_ENV=work
 _packagent_prompt_command
 [ "$PS1" = '(work) (llm) prompt$ ' ]
 """,
@@ -143,10 +167,12 @@ _packagent_prompt_command
 
 def test_bash_shell_init_registers_with_oh_my_bash_prompt_hook(tmp_path: Path) -> None:
     script_path = tmp_path / "omb-prompt.bash"
+    executable = _write_active_env_packagent(tmp_path)
     hook = render_shell_init("bash")
     script_path.write_text(
         f"""
 set -euo pipefail
+PACKAGENT_BIN={shlex.quote(str(executable))}
 PS1='initial$ '
 _omb_util_prompt_command=()
 _omb_util_add_prompt_command() {{
@@ -167,7 +193,7 @@ _omb_theme_PROMPT_COMMAND() {{
   PS1='theme$ '
 }}
 _omb_util_add_prompt_command _omb_theme_PROMPT_COMMAND
-PACKAGENT_ACTIVE_ENV=base
+export PACKAGENT_ACTIVE_ENV=base
 {hook}
 {hook}
 [ "${{PROMPT_COMMAND-}}" = "_omb_util_prompt_command_hook" ]
@@ -192,10 +218,12 @@ _omb_util_prompt_command_hook
 
 def test_bash_shell_init_adds_oh_my_bash_powerline_segment(tmp_path: Path) -> None:
     script_path = tmp_path / "omb-powerline.bash"
+    executable = _write_active_env_packagent(tmp_path)
     hook = render_shell_init("bash")
     script_path.write_text(
         f"""
 set -euo pipefail
+PACKAGENT_BIN={shlex.quote(str(executable))}
 PS1='initial$ '
 _omb_util_prompt_command=()
 _omb_util_add_prompt_command() {{
@@ -229,7 +257,7 @@ _omb_theme_PROMPT_COMMAND() {{
   done
 }}
 _omb_util_add_prompt_command _omb_theme_PROMPT_COMMAND
-PACKAGENT_ACTIVE_ENV=base
+export PACKAGENT_ACTIVE_ENV=base
 {hook}
 {hook}
 [ "$POWERLINE_PROMPT" = 'user_info scm packagent cwd' ]
@@ -258,6 +286,8 @@ esac
 def test_zsh_shell_init_contains_wrapper_and_precmd_hook() -> None:
     script = render_shell_init("zsh")
     assert 'packagent() {' in script
+    assert "_packagent_sync_active_env" in script
+    assert "shell active-env" in script
     assert "add-zsh-hook precmd _packagent_prompt_command" in script
     assert "precmd_functions+=(_packagent_prompt_command)" in script
     assert "packagent_prompt_info()" in script
@@ -271,13 +301,15 @@ def test_zsh_shell_init_uses_right_prompt_when_theme_has_rprompt(tmp_path: Path)
         pytest.skip("zsh is not installed")
 
     script_path = tmp_path / "zsh-rprompt.zsh"
+    executable = _write_active_env_packagent(tmp_path)
     hook = render_shell_init("zsh")
     script_path.write_text(
         f"""
 set -e
+PACKAGENT_BIN={shlex.quote(str(executable))}
 PROMPT='theme%# '
 RPROMPT='conda kube'
-PACKAGENT_ACTIVE_ENV=base
+export PACKAGENT_ACTIVE_ENV=base
 {hook}
 _theme_precmd() {{
   PROMPT='theme%# '
@@ -287,7 +319,7 @@ _theme_precmd
 _packagent_prompt_command
 [[ "$PROMPT" == 'theme%# ' ]] || {{ print -u2 -- "unexpected left prompt: $PROMPT"; exit 1; }}
 [[ "$RPROMPT" == '(base) conda kube' ]] || {{ print -u2 -- "unexpected right prompt: $RPROMPT"; exit 1; }}
-PACKAGENT_ACTIVE_ENV=work
+export PACKAGENT_ACTIVE_ENV=work
 _theme_precmd
 _packagent_prompt_command
 [[ "$PROMPT" == 'theme%# ' ]] || {{ print -u2 -- "unexpected left prompt after switch: $PROMPT"; exit 1; }}
@@ -319,7 +351,13 @@ def test_bash_uninstall_wrapper_clears_current_prompt_state(tmp_path: Path) -> N
     bin_dir.mkdir()
     executable = bin_dir / "packagent"
     executable.write_text(
-        "#!/usr/bin/env bash\nprintf 'uninstalled\\n'\n",
+        """#!/usr/bin/env bash
+if [ "$1" = "shell" ] && [ "${2-}" = "active-env" ]; then
+  printf '%s\\n' "${PACKAGENT_ACTIVE_ENV-}"
+  exit 0
+fi
+printf 'uninstalled\\n'
+""",
         encoding="utf-8",
     )
     executable.chmod(0o755)
@@ -330,9 +368,10 @@ def test_bash_uninstall_wrapper_clears_current_prompt_state(tmp_path: Path) -> N
         f"""
 set -euo pipefail
 export PATH={shlex.quote(str(bin_dir))}:$PATH
+export PACKAGENT_BIN={shlex.quote(str(executable))}
 PS1='prompt$ '
 {hook}
-PACKAGENT_ACTIVE_ENV=base
+export PACKAGENT_ACTIVE_ENV=base
 _packagent_refresh_prompt
 case "$PS1" in
   "(base) "*) ;;

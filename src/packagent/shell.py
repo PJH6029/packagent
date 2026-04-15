@@ -101,6 +101,8 @@ def render_shell_rc_block(shell_name: str) -> str:
         '  _packagent_bin="$HOME/.local/bin/packagent"',
         "fi",
         'if [ -n "$_packagent_bin" ]; then',
+        '  PACKAGENT_BIN="$_packagent_bin"',
+        "  export PACKAGENT_BIN",
         f'  eval "$("$_packagent_bin" shell init {shell_name})"',
         "fi",
         "unset _packagent_bin",
@@ -232,7 +234,25 @@ def _remove_init_block(existing: str) -> str:
 
 def _render_bash_init() -> str:
     return """
+_packagent_call() {
+  command "${PACKAGENT_BIN:-packagent}" "$@"
+}
+_packagent_sync_active_env() {
+  local active_env
+  if active_env="$(_packagent_call shell active-env 2>/dev/null)"; then
+    if [ -n "$active_env" ]; then
+      PACKAGENT_ACTIVE_ENV="$active_env"
+      PACKAGENT_ACTIVE_HOST="codex"
+      export PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
+    else
+      unset PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
+    fi
+  else
+    unset PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
+  fi
+}
 _packagent_update_prompt_modifier() {
+  _packagent_sync_active_env
   if [ -n "${PACKAGENT_ACTIVE_ENV-}" ]; then
     PACKAGENT_PROMPT_MODIFIER="(${PACKAGENT_ACTIVE_ENV}) "
   else
@@ -357,12 +377,12 @@ _packagent_install_prompt_command
 packagent() {
   if [ "$1" = "activate" ] || [ "$1" = "deactivate" ]; then
     local _packagent_output
-    _packagent_output="$(PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=bash command packagent "$@")" || return $?
+    _packagent_output="$(PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=bash _packagent_call "$@")" || return $?
     eval "${_packagent_output}"
     return 0
   fi
   if [ "$1" = "uninstall" ]; then
-    PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=bash command packagent "$@"
+    PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=bash _packagent_call "$@"
     local _packagent_status=$?
     if [ "$_packagent_status" -eq 0 ]; then
       unset PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
@@ -371,7 +391,7 @@ packagent() {
     fi
     return "$_packagent_status"
   fi
-  command packagent "$@"
+  _packagent_call "$@"
 }
 _packagent_refresh_prompt
 """.strip()
@@ -379,7 +399,25 @@ _packagent_refresh_prompt
 
 def _render_zsh_init() -> str:
     return """
+_packagent_call() {
+  command "${PACKAGENT_BIN:-packagent}" "$@"
+}
+_packagent_sync_active_env() {
+  local active_env
+  if active_env="$(_packagent_call shell active-env 2>/dev/null)"; then
+    if [[ -n "$active_env" ]]; then
+      PACKAGENT_ACTIVE_ENV="$active_env"
+      PACKAGENT_ACTIVE_HOST="codex"
+      export PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
+    else
+      unset PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
+    fi
+  else
+    unset PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
+  fi
+}
 _packagent_update_prompt_modifier() {
+  _packagent_sync_active_env
   if [[ -n "${PACKAGENT_ACTIVE_ENV-}" ]]; then
     PACKAGENT_PROMPT_MODIFIER="(${PACKAGENT_ACTIVE_ENV}) "
   else
@@ -463,12 +501,12 @@ fi
 packagent() {
   if [[ "$1" == "activate" || "$1" == "deactivate" ]]; then
     local _packagent_output
-    _packagent_output="$(PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=zsh command packagent "$@")" || return $?
+    _packagent_output="$(PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=zsh _packagent_call "$@")" || return $?
     eval "${_packagent_output}"
     return 0
   fi
   if [[ "$1" == "uninstall" ]]; then
-    PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=zsh command packagent "$@"
+    PACKAGENT_SHELL_HOOK=1 PACKAGENT_SHELL=zsh _packagent_call "$@"
     local _packagent_status=$?
     if [[ "$_packagent_status" -eq 0 ]]; then
       unset PACKAGENT_ACTIVE_ENV PACKAGENT_ACTIVE_HOST
@@ -477,7 +515,7 @@ packagent() {
     fi
     return "$_packagent_status"
   fi
-  command packagent "$@"
+  _packagent_call "$@"
 }
 _packagent_refresh_prompt
 """.strip()

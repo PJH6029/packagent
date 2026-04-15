@@ -26,6 +26,7 @@ State lives in `~/.packagent/state.json` and records:
 - known environments
 - init base mode, when recorded by current versions
 - backup history from first-run takeover, stored under `~/.packagent-backups`
+- the current init/takeover backup root used for backup-mode uninstall
 - managed target metadata
 
 Each environment also contains a small hidden metadata file at
@@ -73,12 +74,14 @@ drifted to an unmanaged path or a different managed env, uninstall refuses and
 asks the user to repair or handle the drift first.
 
 For import-mode installs, uninstall can restore either the copied `base` env or
-the original backup snapshots. Interactive shells prompt for that choice;
-non-interactive shells must pass `--restore-source base` or
-`--restore-source backup`. For fresh-mode installs, uninstall always restores
-backup snapshots. Targets that had no first-run backup are left absent in
-backup mode. The command removes packagent's managed shell rc block but keeps
-`~/.packagent` and `~/.packagent-backups` as recoverable data.
+the backup snapshots for the current init/takeover generation. Interactive
+shells prompt for that choice; non-interactive shells must pass
+`--restore-source base` or `--restore-source backup`. For fresh-mode installs,
+uninstall always restores backup snapshots. Targets that had no backup in the
+current generation are left absent in backup mode, even when older retained
+backup roots contain that target. The command removes packagent's managed shell
+rc block but keeps `~/.packagent` and `~/.packagent-backups` as recoverable
+data.
 
 ## Environment creation
 
@@ -99,6 +102,8 @@ The hook itself:
 - wraps `packagent activate` and `packagent deactivate`
 - evaluates shell code printed by the Python CLI
 - bootstraps the shell to the manager's current active env, usually `base`
+- reconciles prompt state with the current global managed symlinks on every
+  prompt refresh, so long-running shells converge after changes made elsewhere
 - updates prompt metadata through `PACKAGENT_PROMPT_MODIFIER` and
   `packagent_prompt_info`
 - composes with existing bash `PROMPT_COMMAND` hooks instead of replacing them

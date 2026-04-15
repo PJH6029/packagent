@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import os
+import shutil
 import sys
 
 import pytest
@@ -528,6 +529,54 @@ def test_initialize_base_can_reinit_after_uninstall_restore_from_base(manager: P
     assert manager.host.env_home_path(manager.paths, "base").joinpath("base-only.txt").read_text(encoding="utf-8") == "base"
 
 
+def test_uninstall_backup_after_reinit_uses_current_backup_root(manager: PackagentManager) -> None:
+    codex_home = manager.host.managed_home_path(manager.paths)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("first-original", encoding="utf-8")
+    manager.initialize_base("import")
+    manager.create_env("omx", clone_from="base")
+    first_backup_root = Path(manager.load_state().current_backup_root or "")
+
+    manager.uninstall("base")
+    codex_home.joinpath("auth.json").write_text("second-original", encoding="utf-8")
+    manager.initialize_base("import")
+    second_backup_root = Path(manager.load_state().current_backup_root or "")
+    shutil.rmtree(first_backup_root)
+    manager.activate_env("omx")
+
+    result = manager.uninstall("backup")
+
+    assert result.restore_source == "backup"
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "second-original"
+    codex_result = next(item for item in result.target_results if item.key == "codex-home")
+    assert codex_result.source_path == str(second_backup_root / ".codex")
+
+
+def test_uninstall_backup_after_reinit_does_not_resurrect_old_missing_target(
+    manager: PackagentManager,
+) -> None:
+    agents_target = manager.host.target_by_key("agents-home")
+    codex_home = manager.host.managed_home_path(manager.paths)
+    agents_home = manager.host.managed_target_path(manager.paths, agents_target)
+    codex_home.mkdir()
+    codex_home.joinpath("auth.json").write_text("codex-original", encoding="utf-8")
+    agents_home.joinpath("skills").mkdir(parents=True)
+    agents_home.joinpath("skills", "old.txt").write_text("old-agents", encoding="utf-8")
+    manager.initialize_base("import")
+
+    manager.uninstall("base")
+    shutil.rmtree(agents_home)
+    codex_home.joinpath("auth.json").write_text("current-codex", encoding="utf-8")
+    manager.initialize_base("import")
+
+    result = manager.uninstall("backup")
+
+    assert result.restore_source == "backup"
+    assert codex_home.joinpath("auth.json").read_text(encoding="utf-8") == "current-codex"
+    assert not agents_home.exists()
+    assert not agents_home.is_symlink()
+
+
 def test_uninstall_import_mode_can_restore_from_backup(manager: PackagentManager) -> None:
     codex_home = manager.host.managed_home_path(manager.paths)
     codex_home.mkdir()
@@ -862,6 +911,42 @@ def test_cli_shell_init_bootstraps_base_prompt_state(
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
     assert "export CODEX_HOME=" not in output
     assert "export CLAUDE_CONFIG_DIR=" not in output
+
+
+def test_shell_active_env_tracks_only_consistent_global_activation(
+    manager: PackagentManager,
+) -> None:
+    manager.initialize_base("import")
+    manager.create_env("work")
+
+    assert manager.shell_active_env() == "base"
+
+    manager.activate_env("work")
+    assert manager.shell_active_env() == "work"
+
+    manager.activate_env("base")
+    assert manager.shell_active_env() == "base"
+
+    manager.uninstall("base")
+    assert manager.shell_active_env() is None
+
+
+def test_cli_shell_active_env_prints_blank_after_uninstall(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manager.initialize_base("import")
+
+    active_code = main(["shell", "active-env"])
+    active_output = capsys.readouterr().out
+    manager.uninstall("base")
+    inactive_code = main(["shell", "active-env"])
+    inactive_output = capsys.readouterr().out
+
+    assert active_code == 0
+    assert active_output == "base\n"
+    assert inactive_code == 0
+    assert inactive_output == ""
 
 
 def test_cli_create_prints_bare_env_notice(
