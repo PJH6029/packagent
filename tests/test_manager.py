@@ -750,6 +750,31 @@ def test_cli_shell_init_bootstraps_base_prompt_state(
     assert "export CLAUDE_CONFIG_DIR=" not in output
 
 
+def test_cli_create_prints_bare_env_notice(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(["create", "-n", "work"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"created\twork\t{manager.paths.env_dir('work')}" in output
+    assert "You've created an env with bare codex/claude homes except shared auth." in output
+    assert "packagent create -n <env-name> --clone <src-env-name>" in output
+
+
+def test_cli_create_clone_prints_source_env_notice(
+    manager: PackagentManager,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(["create", "-n", "work", "--clone", "base"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"created\twork\t{manager.paths.env_dir('work')}" in output
+    assert "You've created an env based on base." in output
+
+
 def test_cli_init_writes_detected_shell_rc_file(
     manager: PackagentManager,
     monkeypatch: pytest.MonkeyPatch,

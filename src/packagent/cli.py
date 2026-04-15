@@ -89,6 +89,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "create":
             metadata = manager.create_env(args.name, clone_from=args.clone)
             print(f"created\t{metadata.name}\t{manager.paths.env_dir(metadata.name)}")
+            if metadata.cloned_from:
+                print(f"You've created an env based on {metadata.cloned_from}.")
+            else:
+                print(
+                    "You've created an env with bare codex/claude homes except shared auth. "
+                    "Use packagent create -n <env-name> --clone <src-env-name> to seed a source env."
+                )
             return 0
         if args.command == "activate":
             return _handle_activate(manager, args.name)
