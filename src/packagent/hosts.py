@@ -78,5 +78,15 @@ class CodexHost(HostAdapter):
                     home_env_var="CLAUDE_CONFIG_DIR",
                     shared_seed_files=(".credentials.json",),
                 ),
+                ManagedTarget(
+                    key="opencode-config-home",
+                    home_dir_name=".config/opencode",
+                    home_env_var="OPENCODE_CONFIG_DIR",
+                ),
+                ManagedTarget(
+                    key="opencode-data-home",
+                    home_dir_name=".local/share/opencode",
+                    shared_seed_files=("auth.json",),
+                ),
             ),
         )

@@ -165,9 +165,10 @@ class GlobalSymlinkBackend(ActivationBackend):
             relative = target.relative_to(paths.envs_root)
         except ValueError:
             return None
-        if len(relative.parts) != 2:
+        if not relative.parts:
             return None
-        env_name, tail = relative.parts
-        if tail != target_config.home_dir_name:
+        env_name = relative.parts[0]
+        tail = Path(*relative.parts[1:])
+        if tail != Path(target_config.home_dir_name):
             return None
         return env_name

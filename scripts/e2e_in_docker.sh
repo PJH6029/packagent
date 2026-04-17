@@ -208,10 +208,16 @@ main() {
   npm --version
   codex --version || true
   claude --version || true
+  opencode --version || true
 
   echo "== clean previous state =="
   rm -rf "$HOME/.packagent" "$HOME/.packagent-v1"
   for target in "$HOME/.codex" "$HOME/.agents" "$HOME/.claude"; do
+    if [ -L "$target" ]; then
+      rm -f "$target"
+    fi
+  done
+  for target in "$HOME/.config/opencode" "$HOME/.local/share/opencode"; do
     if [ -L "$target" ]; then
       rm -f "$target"
     fi
@@ -252,6 +258,20 @@ EOF
   cat > "$HOME/.claude/settings.json" <<'EOF'
 {"history": "base-only"}
 EOF
+  mkdir -p "$HOME/.config/opencode"
+  cat > "$HOME/.config/opencode/opencode.json" <<'EOF'
+{"model": "packagent/base"}
+EOF
+  cat > "$HOME/.config/opencode/AGENTS.md" <<'EOF'
+OpenCode global rule
+EOF
+  mkdir -p "$HOME/.local/share/opencode/project/global/storage"
+  cat > "$HOME/.local/share/opencode/auth.json" <<'EOF'
+{"opencode_auth": "shared"}
+EOF
+  cat > "$HOME/.local/share/opencode/project/global/storage/session.json" <<'EOF'
+{"session": "base-only"}
+EOF
 
   echo "== install packagent via uv tool =="
   uv tool install /workspace
@@ -276,6 +296,8 @@ EOF
   assert_path_exists "$import_backup_root/.codex/packagent-e2e-codex-seed.txt"
   assert_path_exists "$import_backup_root/.agents/skills/legacy-skill/SKILL.md"
   assert_path_exists "$import_backup_root/.claude/packagent-e2e-claude-seed.json"
+  assert_path_exists "$import_backup_root/.config/opencode/opencode.json"
+  assert_path_exists "$import_backup_root/.local/share/opencode/auth.json"
   local prompt_fake_bin="/tmp/packagent-prompt-active-env"
   write_prompt_active_env_fake "$prompt_fake_bin"
   echo "== verify bash rc can be sourced repeatedly =="
@@ -514,42 +536,61 @@ PY
   local base_home="$root/envs/base/.codex"
   local base_agents="$root/envs/base/.agents"
   local base_claude="$root/envs/base/.claude"
+  local base_opencode_config="$root/envs/base/.config/opencode"
+  local base_opencode_data="$root/envs/base/.local/share/opencode"
   local demo_home="$root/envs/codex-with-demo/.codex"
   local demo_agents="$root/envs/codex-with-demo/.agents"
   local demo_claude="$root/envs/codex-with-demo/.claude"
+  local demo_opencode_config="$root/envs/codex-with-demo/.config/opencode"
+  local demo_opencode_data="$root/envs/codex-with-demo/.local/share/opencode"
   local second_home="$root/envs/second/.codex"
   local second_agents="$root/envs/second/.agents"
   local second_claude="$root/envs/second/.claude"
+  local second_opencode_config="$root/envs/second/.config/opencode"
+  local second_opencode_data="$root/envs/second/.local/share/opencode"
 
   assert_symlink_target "$HOME/.codex" "$demo_home"
   assert_symlink_target "$HOME/.agents" "$demo_agents"
   assert_symlink_target "$HOME/.claude" "$demo_claude"
+  assert_symlink_target "$HOME/.config/opencode" "$demo_opencode_config"
+  assert_symlink_target "$HOME/.local/share/opencode" "$demo_opencode_data"
   assert_path_exists "$base_home/packagent-e2e-codex-seed.txt"
   assert_path_exists "$base_home/auth.json"
   [ -L "$base_home/tmp/dangling-tool" ] || fail "base env did not preserve Codex symlink"
   assert_path_exists "$base_agents/skills/legacy-skill/SKILL.md"
   assert_path_exists "$base_claude/packagent-e2e-claude-seed.json"
   assert_path_exists "$base_claude/.credentials.json"
+  assert_path_exists "$base_opencode_config/opencode.json"
+  assert_path_exists "$base_opencode_config/AGENTS.md"
+  assert_path_exists "$base_opencode_data/auth.json"
+  assert_path_exists "$base_opencode_data/project/global/storage/session.json"
   grep -q "packagent e2e codex seed" "$base_home/packagent-e2e-codex-seed.txt" || fail "base env did not import legacy home"
   grep -q '"codex_auth": "shared"' "$base_home/auth.json" || fail "base env did not import Codex auth"
   grep -q "Legacy skill content" "$base_agents/skills/legacy-skill/SKILL.md" || fail "base env did not import legacy agents home"
   grep -q '"packagent_e2e_claude_seed": true' "$base_claude/packagent-e2e-claude-seed.json" || fail "base env did not import legacy Claude home"
   grep -q '"claude_auth": "shared"' "$base_claude/.credentials.json" || fail "base env did not import Claude auth"
+  grep -q '"model": "packagent/base"' "$base_opencode_config/opencode.json" || fail "base env did not import OpenCode config"
+  grep -q '"opencode_auth": "shared"' "$base_opencode_data/auth.json" || fail "base env did not import OpenCode auth"
   assert_path_exists "$demo_home/auth.json"
   assert_path_exists "$demo_claude/.credentials.json"
+  assert_path_exists "$demo_opencode_data/auth.json"
   assert_path_missing "$demo_home/history.jsonl"
   assert_path_missing "$demo_claude/settings.json"
+  assert_path_missing "$demo_opencode_config/opencode.json"
+  assert_path_missing "$demo_opencode_data/project"
   grep -q '"codex_auth": "shared"' "$demo_home/auth.json" || fail "new env did not seed Codex auth"
   grep -q '"claude_auth": "shared"' "$demo_claude/.credentials.json" || fail "new env did not seed Claude auth"
+  grep -q '"opencode_auth": "shared"' "$demo_opencode_data/auth.json" || fail "new env did not seed OpenCode auth"
 
   echo "== verify npm global installs work for the sandbox user =="
   [ "$(npm config get prefix)" = "$HOME/.local" ] || fail "npm global prefix is not user-local"
-  npm install -g @openai/codex @anthropic-ai/claude-code oh-my-codex >/tmp/packagent-npm-install.txt 2>&1 || {
+  npm install -g @openai/codex @anthropic-ai/claude-code opencode-ai oh-my-codex >/tmp/packagent-npm-install.txt 2>&1 || {
     cat /tmp/packagent-npm-install.txt >&2
     fail "npm global install failed for sandbox user"
   }
   command -v omx >/dev/null || fail "omx was not installed into the sandbox user's PATH"
   command -v claude >/dev/null || fail "claude was not installed into the sandbox user's PATH"
+  command -v opencode >/dev/null || fail "opencode was not installed into the sandbox user's PATH"
 
   echo "== simulate harness writing into active targets =="
   mkdir -p "$HOME/.codex/skills/demo-skill"
@@ -574,10 +615,19 @@ EOF
   cat > "$HOME/.claude/settings.json" <<'EOF'
 {"active": "codex-with-demo"}
 EOF
+  cat > "$HOME/.config/opencode/opencode.json" <<'EOF'
+{"active": "codex-with-demo"}
+EOF
+  mkdir -p "$HOME/.local/share/opencode/project/demo/storage"
+  cat > "$HOME/.local/share/opencode/project/demo/storage/session.json" <<'EOF'
+{"active": "codex-with-demo"}
+EOF
 
   assert_path_exists "$demo_home/skills/demo-skill/SKILL.md"
   assert_path_exists "$demo_agents/skills/user-skill/SKILL.md"
   assert_path_exists "$demo_claude/settings.json"
+  assert_path_exists "$demo_opencode_config/opencode.json"
+  assert_path_exists "$demo_opencode_data/project/demo/storage/session.json"
 
   echo "== create second env and verify isolation =="
   packagent create -n second
@@ -585,11 +635,16 @@ EOF
   assert_symlink_target "$HOME/.codex" "$second_home"
   assert_symlink_target "$HOME/.agents" "$second_agents"
   assert_symlink_target "$HOME/.claude" "$second_claude"
+  assert_symlink_target "$HOME/.config/opencode" "$second_opencode_config"
+  assert_symlink_target "$HOME/.local/share/opencode" "$second_opencode_data"
   assert_path_missing "$HOME/.codex/skills/demo-skill/SKILL.md"
   assert_path_missing "$HOME/.agents/skills/user-skill/SKILL.md"
   assert_path_missing "$HOME/.claude/settings.json"
+  assert_path_missing "$HOME/.config/opencode/opencode.json"
+  assert_path_missing "$HOME/.local/share/opencode/project/demo/storage/session.json"
   assert_path_exists "$HOME/.codex/auth.json"
   assert_path_exists "$HOME/.claude/.credentials.json"
+  assert_path_exists "$HOME/.local/share/opencode/auth.json"
 
   echo "== force doctor repair path =="
   rm -f "$HOME/.codex"
@@ -598,6 +653,10 @@ EOF
   ln -s "$base_agents" "$HOME/.agents"
   rm -f "$HOME/.claude"
   ln -s "$base_claude" "$HOME/.claude"
+  rm -f "$HOME/.config/opencode"
+  ln -s "$base_opencode_config" "$HOME/.config/opencode"
+  rm -f "$HOME/.local/share/opencode"
+  ln -s "$base_opencode_data" "$HOME/.local/share/opencode"
   if packagent doctor >/tmp/packagent-doctor-before.txt 2>&1; then
     fail "doctor should have reported drift before repair"
   fi
@@ -605,20 +664,27 @@ EOF
   assert_symlink_target "$HOME/.codex" "$second_home"
   assert_symlink_target "$HOME/.agents" "$second_agents"
   assert_symlink_target "$HOME/.claude" "$second_claude"
+  assert_symlink_target "$HOME/.config/opencode" "$second_opencode_config"
+  assert_symlink_target "$HOME/.local/share/opencode" "$second_opencode_data"
 
   echo "== deactivate back to base =="
   packagent deactivate
   assert_symlink_target "$HOME/.codex" "$base_home"
   assert_symlink_target "$HOME/.agents" "$base_agents"
   assert_symlink_target "$HOME/.claude" "$base_claude"
+  assert_symlink_target "$HOME/.config/opencode" "$base_opencode_config"
+  assert_symlink_target "$HOME/.local/share/opencode" "$base_opencode_data"
   grep -q "packagent e2e codex seed" "$HOME/.codex/packagent-e2e-codex-seed.txt" || fail "base env was not restored on deactivate"
   grep -q "Legacy skill content" "$HOME/.agents/skills/legacy-skill/SKILL.md" || fail "base agents env was not restored on deactivate"
   grep -q '"packagent_e2e_claude_seed": true' "$HOME/.claude/packagent-e2e-claude-seed.json" || fail "base Claude env was not restored on deactivate"
+  grep -q '"model": "packagent/base"' "$HOME/.config/opencode/opencode.json" || fail "base OpenCode config env was not restored on deactivate"
+  grep -q '"opencode_auth": "shared"' "$HOME/.local/share/opencode/auth.json" || fail "base OpenCode data env was not restored on deactivate"
 
   echo "== verify fresh base mode backs up without import =="
   local fresh_home
   fresh_home="$(mktemp -d)"
   mkdir -p "$fresh_home/.codex" "$fresh_home/.claude"
+  mkdir -p "$fresh_home/.config/opencode" "$fresh_home/.local/share/opencode/project/global/storage"
   cat > "$fresh_home/.codex/auth.json" <<'EOF'
 {"codex_auth": "fresh-backup-only"}
 EOF
@@ -628,13 +694,26 @@ EOF
   cat > "$fresh_home/.claude/.credentials.json" <<'EOF'
 {"claude_auth": "fresh-backup-only"}
 EOF
+  cat > "$fresh_home/.config/opencode/opencode.json" <<'EOF'
+{"opencode_config": "fresh-backup-only"}
+EOF
+  cat > "$fresh_home/.local/share/opencode/auth.json" <<'EOF'
+{"opencode_auth": "fresh-backup-only"}
+EOF
+  cat > "$fresh_home/.local/share/opencode/project/global/storage/session.json" <<'EOF'
+{"session": "fresh-backup-only"}
+EOF
   HOME="$fresh_home" packagent init --shell bash --base-mode fresh --rc-file "$fresh_home/.bashrc" >/tmp/packagent-fresh-init.txt
   grep -q 'base_mode: fresh' /tmp/packagent-fresh-init.txt || fail "packagent init did not report fresh base mode"
   assert_symlink_target "$fresh_home/.codex" "$fresh_home/.packagent/envs/base/.codex"
   assert_symlink_target "$fresh_home/.claude" "$fresh_home/.packagent/envs/base/.claude"
+  assert_symlink_target "$fresh_home/.config/opencode" "$fresh_home/.packagent/envs/base/.config/opencode"
+  assert_symlink_target "$fresh_home/.local/share/opencode" "$fresh_home/.packagent/envs/base/.local/share/opencode"
   assert_path_missing "$fresh_home/.packagent/envs/base/.codex/auth.json"
   assert_path_missing "$fresh_home/.packagent/envs/base/.codex/history.jsonl"
   assert_path_missing "$fresh_home/.packagent/envs/base/.claude/.credentials.json"
+  assert_path_missing "$fresh_home/.packagent/envs/base/.config/opencode/opencode.json"
+  assert_path_missing "$fresh_home/.packagent/envs/base/.local/share/opencode/auth.json"
   local fresh_backup_count
   fresh_backup_count="$(find "$fresh_home/.packagent-backups" -mindepth 1 -maxdepth 1 -type d | wc -l)"
   [ "$fresh_backup_count" -eq 1 ] || fail "fresh mode should create one grouped backup root, got $fresh_backup_count"
@@ -642,13 +721,20 @@ EOF
   fresh_backup_root="$(find "$fresh_home/.packagent-backups" -mindepth 1 -maxdepth 1 -type d -print -quit)"
   assert_path_exists "$fresh_backup_root/.codex/auth.json"
   assert_path_exists "$fresh_backup_root/.claude/.credentials.json"
+  assert_path_exists "$fresh_backup_root/.config/opencode/opencode.json"
+  assert_path_exists "$fresh_backup_root/.local/share/opencode/auth.json"
   HOME="$fresh_home" packagent uninstall --shell bash --rc-file "$fresh_home/.bashrc" >/tmp/packagent-fresh-uninstall.txt
   grep -q 'restore_source: backup' /tmp/packagent-fresh-uninstall.txt || fail "fresh uninstall did not use backup restore source"
   [ ! -L "$fresh_home/.codex" ] || fail "fresh uninstall left Codex home as a symlink"
   [ ! -L "$fresh_home/.claude" ] || fail "fresh uninstall left Claude home as a symlink"
+  [ ! -L "$fresh_home/.config/opencode" ] || fail "fresh uninstall left OpenCode config as a symlink"
+  [ ! -L "$fresh_home/.local/share/opencode" ] || fail "fresh uninstall left OpenCode data as a symlink"
   grep -q '"codex_auth": "fresh-backup-only"' "$fresh_home/.codex/auth.json" || fail "fresh uninstall did not restore Codex backup"
   grep -q '"history": "fresh-backup-only"' "$fresh_home/.codex/history.jsonl" || fail "fresh uninstall did not restore Codex history backup"
   grep -q '"claude_auth": "fresh-backup-only"' "$fresh_home/.claude/.credentials.json" || fail "fresh uninstall did not restore Claude backup"
+  grep -q '"opencode_config": "fresh-backup-only"' "$fresh_home/.config/opencode/opencode.json" || fail "fresh uninstall did not restore OpenCode config backup"
+  grep -q '"opencode_auth": "fresh-backup-only"' "$fresh_home/.local/share/opencode/auth.json" || fail "fresh uninstall did not restore OpenCode data backup"
+  grep -q '"session": "fresh-backup-only"' "$fresh_home/.local/share/opencode/project/global/storage/session.json" || fail "fresh uninstall did not restore OpenCode session backup"
   assert_path_missing "$fresh_home/.agents"
   if grep -q '# >>> packagent initialize >>>' "$fresh_home/.bashrc"; then
     fail "fresh uninstall did not remove shell init block"
@@ -688,9 +774,13 @@ EOF
   [ ! -L "$HOME/.codex" ] || fail "uninstall left Codex home as a symlink"
   [ ! -L "$HOME/.agents" ] || fail "uninstall left agents home as a symlink"
   [ ! -L "$HOME/.claude" ] || fail "uninstall left Claude home as a symlink"
+  [ ! -L "$HOME/.config/opencode" ] || fail "uninstall left OpenCode config as a symlink"
+  [ ! -L "$HOME/.local/share/opencode" ] || fail "uninstall left OpenCode data as a symlink"
   grep -q "packagent e2e codex seed" "$HOME/.codex/packagent-e2e-codex-seed.txt" || fail "uninstall did not restore base Codex home"
   grep -q "Legacy skill content" "$HOME/.agents/skills/legacy-skill/SKILL.md" || fail "uninstall did not restore base agents home"
   grep -q '"packagent_e2e_claude_seed": true' "$HOME/.claude/packagent-e2e-claude-seed.json" || fail "uninstall did not restore base Claude home"
+  grep -q '"model": "packagent/base"' "$HOME/.config/opencode/opencode.json" || fail "uninstall did not restore base OpenCode config"
+  grep -q '"opencode_auth": "shared"' "$HOME/.local/share/opencode/auth.json" || fail "uninstall did not restore base OpenCode data"
   if grep -q '# >>> packagent initialize >>>' "$HOME/.bashrc"; then
     fail "uninstall did not remove shell init block"
   fi
@@ -701,7 +791,10 @@ EOF
   assert_symlink_target "$HOME/.codex" "$root/envs/base/.codex"
   assert_symlink_target "$HOME/.agents" "$root/envs/base/.agents"
   assert_symlink_target "$HOME/.claude" "$root/envs/base/.claude"
+  assert_symlink_target "$HOME/.config/opencode" "$root/envs/base/.config/opencode"
+  assert_symlink_target "$HOME/.local/share/opencode" "$root/envs/base/.local/share/opencode"
   grep -q "packagent e2e codex seed" "$root/envs/base/.codex/packagent-e2e-codex-seed.txt" || fail "re-init did not preserve restored Codex home"
+  grep -q '"model": "packagent/base"' "$root/envs/base/.config/opencode/opencode.json" || fail "re-init did not preserve restored OpenCode config"
   packagent uninstall --restore-source base --shell bash >/tmp/packagent-reuninstall.txt
   grep -q 'restore_source: base' /tmp/packagent-reuninstall.txt || fail "second uninstall did not report base restore source"
   [ ! -L "$HOME/.codex" ] || fail "second uninstall left Codex home as a symlink"

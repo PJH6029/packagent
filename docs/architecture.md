@@ -6,11 +6,15 @@
 
 - `CodexHost`: host-specific target rules for the managed user-level layer,
   currently `codex-home` (`CODEX_HOME` when it is already set, otherwise
-  `~/.codex`, plus `envs/<name>/.codex`) and `agents-home` (`~/.agents`, plus
-  `envs/<name>/.agents`) and `claude-home` (`CLAUDE_CONFIG_DIR` when it is
-  already set, otherwise `~/.claude`, plus `envs/<name>/.claude`). It also
-  records auth files that are safe to seed into newly created envs:
-  `.codex/auth.json` and `.claude/.credentials.json`.
+  `~/.codex`, plus `envs/<name>/.codex`), `agents-home` (`~/.agents`, plus
+  `envs/<name>/.agents`), `claude-home` (`CLAUDE_CONFIG_DIR` when it is
+  already set, otherwise `~/.claude`, plus `envs/<name>/.claude`),
+  `opencode-config-home` (`OPENCODE_CONFIG_DIR` when it is already set,
+  otherwise `~/.config/opencode`, plus `envs/<name>/.config/opencode`), and
+  `opencode-data-home` (`~/.local/share/opencode`, plus
+  `envs/<name>/.local/share/opencode`). It also records auth files that are
+  safe to seed into newly created envs: `.codex/auth.json`,
+  `.claude/.credentials.json`, and `.local/share/opencode/auth.json`.
 - `GlobalSymlinkBackend`: activation backend that points each managed target
   path at the same active managed environment
 - `PackagentManager`: state loading, takeover, create/clone/remove, activation,
@@ -32,15 +36,17 @@ State lives in `~/.packagent/state.json` and records:
 Each environment also contains a small hidden metadata file at
 `envs/<name>/.packagent-env.json`. Existing version 1 state is migrated to
 schema version 2 by adding `managed_targets` for `codex-home`, `agents-home`,
-and `claude-home` while keeping legacy primary-target fields populated for
-compatibility.
+`claude-home`, `opencode-config-home`, and `opencode-data-home` while keeping
+legacy primary-target fields populated for compatibility.
 
 ## First-run takeover
 
 When `packagent init` or first activation manages homes for the first time,
 `packagent` inspects every managed target path: the Codex home path
-(`CODEX_HOME` when set, otherwise `~/.codex`) and `~/.agents`, plus the Claude
-home path (`CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude`):
+(`CODEX_HOME` when set, otherwise `~/.codex`), `~/.agents`, the Claude home
+path (`CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude`), the OpenCode config
+path (`OPENCODE_CONFIG_DIR` when set, otherwise `~/.config/opencode`), and
+OpenCode data at `~/.local/share/opencode`:
 
 - missing path: create a managed symlink
 - unmanaged directory: move it into
@@ -52,9 +58,10 @@ home path (`CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude`):
 
 Activation preflights all targets before writing symlinks, then backs up all
 unmanaged targets from the same takeover pass under one timestamp root, for
-example `~/.packagent-backups/<timestamp>/{.codex,.agents,.claude}`. It then
-repoints all managed target paths to the selected environment. The deactivated
-state is always `base`.
+example
+`~/.packagent-backups/<timestamp>/{.codex,.agents,.claude,.config/opencode,.local/share/opencode}`.
+It then repoints all managed target paths to the selected environment. The
+deactivated state is always `base`.
 
 `packagent init --base-mode fresh` uses the same backup safety path, but does
 not import the backed-up files into `base`. Interactive `init` prompts for the
@@ -88,8 +95,9 @@ data.
 `packagent create -n <env>` creates empty target directories, then copies only
 host-declared auth seed files from the active env into the new env. Full
 history, logs, caches, sessions, settings, skills, and plugins remain
-env-specific. `packagent create -n <env> --clone <source-env>` keeps the older
-full-copy behavior.
+env-specific. For OpenCode, `auth.json` under `.local/share/opencode` is copied
+but project session data is not. `packagent create -n <env> --clone
+<source-env>` keeps the older full-copy behavior.
 
 ## Shell model
 
@@ -122,10 +130,13 @@ The hook itself:
   tools such as Conda have prepended their own prompt modifier
 - leaves any existing `CODEX_HOME` export untouched
 - leaves any existing `CLAUDE_CONFIG_DIR` export untouched
+- leaves any existing `OPENCODE_CONFIG_DIR` export untouched
 
-The shell hook does not export managed target paths. Tools that read `~/.agents`
-or `~/.claude` continue to use those stable paths, which `packagent` switches at
-activation time.
+The shell hook does not export managed target paths. Tools that read `~/.agents`,
+`~/.claude`, `~/.config/opencode`, or `~/.local/share/opencode` continue to use
+those stable paths, which `packagent` switches at activation time. If a user has
+already set `OPENCODE_CONFIG_DIR`, OpenCode keeps using that custom config
+directory and `packagent` switches it by symlink just like `CODEX_HOME`.
 
 Direct `packagent activate` calls fail unless the shell hook is being used.
 
@@ -137,7 +148,11 @@ The code already separates:
 - activation strategy through `ActivationBackend`
 
 The current product boundary is user-level target packaging for Codex, shared
-agent files, and Claude. It intentionally does not add a provider selector:
-`~/.codex`, `~/.agents`, and `~/.claude` move together with the one active env.
-The multi-target model keeps a later `GeminiHost`, additional target, or future
+agent files, Claude, and OpenCode. It intentionally does not add a provider
+selector: all managed targets move together with the one active env. The
+multi-target model keeps a later `GeminiHost`, additional target, or future
 per-shell backend from forcing a rewrite of the manager or state model.
+
+`packagent` does not isolate trusted repo-local `.codex/`, `.agents/`,
+`.claude/`, `.opencode/`, `opencode.json`, or repo/system instruction layers
+that agent tools may also load.

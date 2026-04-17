@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [
   { name = "jeonghunpark" }
 ]
-keywords = ["codex", "claude", "cli", "agent", "environment", "packaging"]
+keywords = ["codex", "claude", "opencode", "cli", "agent", "environment", "packaging"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

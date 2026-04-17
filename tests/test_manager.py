@@ -50,7 +50,10 @@ def test_home_inspection_detects_missing_directory_and_managed_symlink(manager: 
     assert inspection.managed_env == "work"
 
 
-@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+@pytest.mark.parametrize(
+    "target_key",
+    ["agents-home", "claude-home", "opencode-config-home", "opencode-data-home"],
+)
 def test_companion_target_inspection_detects_managed_symlink(
     manager: PackagentManager,
     target_key: str,
@@ -151,6 +154,8 @@ def test_initialize_base_symlink_backup_uses_target_name(manager: PackagentManag
     [
         ("agents-home", ("skills", "demo", "SKILL.md"), "legacy-skill"),
         ("claude-home", ("settings.json",), '{"theme":"legacy"}'),
+        ("opencode-config-home", ("opencode.json",), '{"model":"demo"}'),
+        ("opencode-data-home", ("auth.json",), '{"provider":"demo"}'),
     ],
 )
 def test_first_activation_imports_existing_companion_home_into_base_and_replaces_link(
@@ -195,6 +200,8 @@ def test_activation_keeps_env_writes_isolated(manager: PackagentManager) -> None
 def test_activation_keeps_all_target_writes_isolated(manager: PackagentManager) -> None:
     agents_target = manager.host.target_by_key("agents-home")
     claude_target = manager.host.target_by_key("claude-home")
+    opencode_config_target = manager.host.target_by_key("opencode-config-home")
+    opencode_data_target = manager.host.target_by_key("opencode-data-home")
     manager.create_env("env-a")
     manager.create_env("env-b")
 
@@ -206,18 +213,29 @@ def test_activation_keeps_all_target_writes_isolated(manager: PackagentManager) 
     agents_home.joinpath("skills").mkdir()
     agents_home.joinpath("skills", "demo.txt").write_text("skill-a", encoding="utf-8")
     claude_home.joinpath("settings.json").write_text('{"env":"a"}', encoding="utf-8")
+    opencode_config_home = manager.host.managed_target_path(manager.paths, opencode_config_target)
+    opencode_data_home = manager.host.managed_target_path(manager.paths, opencode_data_target)
+    opencode_config_home.joinpath("opencode.json").write_text('{"env":"a"}', encoding="utf-8")
+    opencode_data_home.joinpath("project").mkdir()
+    opencode_data_home.joinpath("project", "session.json").write_text('{"env":"a"}', encoding="utf-8")
 
     manager.activate_env("env-b")
 
     assert manager.host.env_home_path(manager.paths, "env-a").joinpath("AGENTS.md").read_text(encoding="utf-8") == "from-a"
     assert manager.host.env_target_path(manager.paths, "env-a", agents_target).joinpath("skills", "demo.txt").read_text(encoding="utf-8") == "skill-a"
     assert manager.host.env_target_path(manager.paths, "env-a", claude_target).joinpath("settings.json").read_text(encoding="utf-8") == '{"env":"a"}'
+    assert manager.host.env_target_path(manager.paths, "env-a", opencode_config_target).joinpath("opencode.json").read_text(encoding="utf-8") == '{"env":"a"}'
+    assert manager.host.env_target_path(manager.paths, "env-a", opencode_data_target).joinpath("project", "session.json").read_text(encoding="utf-8") == '{"env":"a"}'
     assert not manager.host.env_home_path(manager.paths, "env-b").joinpath("AGENTS.md").exists()
     assert not manager.host.env_target_path(manager.paths, "env-b", agents_target).joinpath("skills", "demo.txt").exists()
     assert not manager.host.env_target_path(manager.paths, "env-b", claude_target).joinpath("settings.json").exists()
+    assert not manager.host.env_target_path(manager.paths, "env-b", opencode_config_target).joinpath("opencode.json").exists()
+    assert not manager.host.env_target_path(manager.paths, "env-b", opencode_data_target).joinpath("project", "session.json").exists()
     assert codex_home.resolve() == manager.host.env_home_path(manager.paths, "env-b")
     assert agents_home.resolve() == manager.host.env_target_path(manager.paths, "env-b", agents_target)
     assert claude_home.resolve() == manager.host.env_target_path(manager.paths, "env-b", claude_target)
+    assert opencode_config_home.resolve() == manager.host.env_target_path(manager.paths, "env-b", opencode_config_target)
+    assert opencode_data_home.resolve() == manager.host.env_target_path(manager.paths, "env-b", opencode_data_target)
 
 
 def test_deactivate_restores_base(manager: PackagentManager) -> None:
@@ -234,9 +252,13 @@ def test_deactivate_restores_base(manager: PackagentManager) -> None:
 
 def test_create_seeds_only_shared_auth_files_from_base(manager: PackagentManager) -> None:
     claude_target = manager.host.target_by_key("claude-home")
+    opencode_config_target = manager.host.target_by_key("opencode-config-home")
+    opencode_data_target = manager.host.target_by_key("opencode-data-home")
     manager.status()
     base_codex = manager.host.env_home_path(manager.paths, "base")
     base_claude = manager.host.env_target_path(manager.paths, "base", claude_target)
+    base_opencode_config = manager.host.env_target_path(manager.paths, "base", opencode_config_target)
+    base_opencode_data = manager.host.env_target_path(manager.paths, "base", opencode_data_target)
     base_codex.joinpath("auth.json").write_text('{"token":"codex"}', encoding="utf-8")
     base_codex.joinpath("history.jsonl").write_text("history\n", encoding="utf-8")
     base_codex.joinpath("config.toml").write_text("model = 'demo'\n", encoding="utf-8")
@@ -246,34 +268,47 @@ def test_create_seeds_only_shared_auth_files_from_base(manager: PackagentManager
     base_codex.joinpath("sessions", "session.jsonl").write_text("session\n", encoding="utf-8")
     base_claude.joinpath(".credentials.json").write_text('{"token":"claude"}', encoding="utf-8")
     base_claude.joinpath("settings.json").write_text('{"theme":"demo"}', encoding="utf-8")
+    base_opencode_config.joinpath("opencode.json").write_text('{"model":"demo"}', encoding="utf-8")
+    base_opencode_data.joinpath("auth.json").write_text('{"token":"opencode"}', encoding="utf-8")
+    base_opencode_data.joinpath("project").mkdir()
+    base_opencode_data.joinpath("project", "session.json").write_text("session\n", encoding="utf-8")
 
     manager.create_env("work")
 
     work_codex = manager.host.env_home_path(manager.paths, "work")
     work_claude = manager.host.env_target_path(manager.paths, "work", claude_target)
+    work_opencode_config = manager.host.env_target_path(manager.paths, "work", opencode_config_target)
+    work_opencode_data = manager.host.env_target_path(manager.paths, "work", opencode_data_target)
     assert work_codex.joinpath("auth.json").read_text(encoding="utf-8") == '{"token":"codex"}'
     assert work_claude.joinpath(".credentials.json").read_text(encoding="utf-8") == '{"token":"claude"}'
+    assert work_opencode_data.joinpath("auth.json").read_text(encoding="utf-8") == '{"token":"opencode"}'
     assert not work_codex.joinpath("history.jsonl").exists()
     assert not work_codex.joinpath("config.toml").exists()
     assert not work_codex.joinpath("log").exists()
     assert not work_codex.joinpath("sessions").exists()
     assert not work_claude.joinpath("settings.json").exists()
+    assert not work_opencode_config.joinpath("opencode.json").exists()
+    assert not work_opencode_data.joinpath("project").exists()
 
 
 def test_create_seeds_shared_auth_files_from_active_env(manager: PackagentManager) -> None:
     claude_target = manager.host.target_by_key("claude-home")
+    opencode_data_target = manager.host.target_by_key("opencode-data-home")
     manager.create_env("env-a")
     manager.activate_env("env-a")
     manager.host.env_home_path(manager.paths, "base").joinpath("auth.json").write_text("base", encoding="utf-8")
     env_a_codex = manager.host.env_home_path(manager.paths, "env-a")
     env_a_claude = manager.host.env_target_path(manager.paths, "env-a", claude_target)
+    env_a_opencode_data = manager.host.env_target_path(manager.paths, "env-a", opencode_data_target)
     env_a_codex.joinpath("auth.json").write_text("env-a", encoding="utf-8")
     env_a_claude.joinpath(".credentials.json").write_text("env-a-claude", encoding="utf-8")
+    env_a_opencode_data.joinpath("auth.json").write_text("env-a-opencode", encoding="utf-8")
 
     manager.create_env("env-b")
 
     assert manager.host.env_home_path(manager.paths, "env-b").joinpath("auth.json").read_text(encoding="utf-8") == "env-a"
     assert manager.host.env_target_path(manager.paths, "env-b", claude_target).joinpath(".credentials.json").read_text(encoding="utf-8") == "env-a-claude"
+    assert manager.host.env_target_path(manager.paths, "env-b", opencode_data_target).joinpath("auth.json").read_text(encoding="utf-8") == "env-a-opencode"
 
 
 def test_create_skips_shared_auth_symlinks(manager: PackagentManager) -> None:
@@ -330,6 +365,19 @@ def test_activation_uses_existing_claude_config_dir(manager: PackagentManager, m
     assert manager.host.managed_target_path(manager.paths, claude_target) == custom_home
     assert custom_home.is_symlink()
     assert custom_home.resolve() == manager.host.env_target_path(manager.paths, "work", claude_target)
+
+
+def test_activation_uses_existing_opencode_config_dir(manager: PackagentManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    custom_home = manager.paths.home / ".config" / "custom-opencode"
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(custom_home))
+    opencode_target = manager.host.target_by_key("opencode-config-home")
+
+    manager.create_env("work")
+    manager.activate_env("work")
+
+    assert manager.host.managed_target_path(manager.paths, opencode_target) == custom_home
+    assert custom_home.is_symlink()
+    assert custom_home.resolve() == manager.host.env_target_path(manager.paths, "work", opencode_target)
 
 
 def test_create_clone_base_copies_home_contents(manager: PackagentManager) -> None:
@@ -510,6 +558,36 @@ def test_uninstall_import_mode_can_restore_from_base(manager: PackagentManager) 
     assert claude_home.joinpath("settings.json").read_text(encoding="utf-8") == "claude-original"
     assert manager.paths.root.exists()
     assert manager.load_state().last_link_target is None
+
+
+def test_nested_opencode_targets_import_and_uninstall_from_backup(manager: PackagentManager) -> None:
+    config_target = manager.host.target_by_key("opencode-config-home")
+    data_target = manager.host.target_by_key("opencode-data-home")
+    config_home = manager.host.managed_target_path(manager.paths, config_target)
+    data_home = manager.host.managed_target_path(manager.paths, data_target)
+    config_home.mkdir(parents=True)
+    config_home.joinpath("opencode.json").write_text('{"model":"demo"}', encoding="utf-8")
+    data_home.mkdir(parents=True)
+    data_home.joinpath("auth.json").write_text('{"token":"opencode"}', encoding="utf-8")
+    data_home.joinpath("project").mkdir()
+    data_home.joinpath("project", "session.json").write_text("session", encoding="utf-8")
+
+    manager.initialize_base("import")
+    backup_root = Path(manager.load_state().current_backup_root or "")
+
+    assert config_home.is_symlink()
+    assert data_home.is_symlink()
+    assert backup_root.joinpath(".config", "opencode", "opencode.json").read_text(encoding="utf-8") == '{"model":"demo"}'
+    assert backup_root.joinpath(".local", "share", "opencode", "auth.json").read_text(encoding="utf-8") == '{"token":"opencode"}'
+
+    result = manager.uninstall("backup")
+
+    assert result.restore_source == "backup"
+    assert not config_home.is_symlink()
+    assert not data_home.is_symlink()
+    assert config_home.joinpath("opencode.json").read_text(encoding="utf-8") == '{"model":"demo"}'
+    assert data_home.joinpath("auth.json").read_text(encoding="utf-8") == '{"token":"opencode"}'
+    assert data_home.joinpath("project", "session.json").read_text(encoding="utf-8") == "session"
 
 
 def test_initialize_base_can_reinit_after_uninstall_restore_from_base(manager: PackagentManager) -> None:
@@ -762,7 +840,10 @@ def test_doctor_detects_and_repairs_symlink_drift(manager: PackagentManager) -> 
     assert home.resolve() == manager.host.env_home_path(manager.paths, "env-a")
 
 
-@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+@pytest.mark.parametrize(
+    "target_key",
+    ["agents-home", "claude-home", "opencode-config-home", "opencode-data-home"],
+)
 def test_doctor_detects_and_repairs_companion_symlink_drift(
     manager: PackagentManager,
     target_key: str,
@@ -783,7 +864,10 @@ def test_doctor_detects_and_repairs_companion_symlink_drift(
     assert home.resolve() == manager.host.env_target_path(manager.paths, "env-a", target)
 
 
-@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+@pytest.mark.parametrize(
+    "target_key",
+    ["agents-home", "claude-home", "opencode-config-home", "opencode-data-home"],
+)
 def test_doctor_detects_and_repairs_missing_companion_symlink(
     manager: PackagentManager,
     target_key: str,
@@ -803,7 +887,10 @@ def test_doctor_detects_and_repairs_missing_companion_symlink(
     assert home.resolve() == manager.host.env_target_path(manager.paths, "env-a", target)
 
 
-@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+@pytest.mark.parametrize(
+    "target_key",
+    ["agents-home", "claude-home", "opencode-config-home", "opencode-data-home"],
+)
 def test_doctor_detects_and_repairs_unmanaged_companion_directory(
     manager: PackagentManager,
     target_key: str,
@@ -826,7 +913,10 @@ def test_doctor_detects_and_repairs_unmanaged_companion_directory(
     assert manager.host.env_target_path(manager.paths, "base", target).joinpath("memory.md").read_text(encoding="utf-8") == "legacy"
 
 
-@pytest.mark.parametrize("target_key", ["agents-home", "claude-home"])
+@pytest.mark.parametrize(
+    "target_key",
+    ["agents-home", "claude-home", "opencode-config-home", "opencode-data-home"],
+)
 def test_doctor_detects_and_repairs_broken_companion_managed_symlink(
     manager: PackagentManager,
     target_key: str,
@@ -870,10 +960,18 @@ def test_schema_v1_state_migrates_to_managed_targets(manager: PackagentManager) 
     migrated = manager.load_state()
 
     assert migrated.schema_version == 2
-    assert sorted(migrated.managed_targets) == ["agents-home", "claude-home", "codex-home"]
+    assert sorted(migrated.managed_targets) == [
+        "agents-home",
+        "claude-home",
+        "codex-home",
+        "opencode-config-home",
+        "opencode-data-home",
+    ]
     assert migrated.managed_targets["codex-home"].last_link_target == str(manager.paths.env_dir("base") / ".codex")
     assert manager.host.env_target_path(manager.paths, "base", manager.host.target_by_key("agents-home")).exists()
     assert manager.host.env_target_path(manager.paths, "base", manager.host.target_by_key("claude-home")).exists()
+    assert manager.host.env_target_path(manager.paths, "base", manager.host.target_by_key("opencode-config-home")).exists()
+    assert manager.host.env_target_path(manager.paths, "base", manager.host.target_by_key("opencode-data-home")).exists()
 
 
 def test_harness_style_write_and_read_follow_the_active_home(manager: PackagentManager) -> None:
@@ -913,6 +1011,7 @@ def test_cli_shell_init_bootstraps_base_prompt_state(
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
     assert "export CODEX_HOME=" not in output
     assert "export CLAUDE_CONFIG_DIR=" not in output
+    assert "export OPENCODE_CONFIG_DIR=" not in output
 
 
 def test_cli_shell_init_without_managed_targets_does_not_bootstrap_prompt_state(
@@ -972,7 +1071,7 @@ def test_cli_create_prints_bare_env_notice(
 
     assert exit_code == 0
     assert f"created\twork\t{manager.paths.env_dir('work')}" in output
-    assert "You've created an env with bare codex/claude homes except shared auth." in output
+    assert "You've created an env with bare agent homes except shared auth." in output
     assert "packagent create -n <env-name> --clone <src-env-name>" in output
 
 
@@ -1208,6 +1307,7 @@ def test_cli_deactivate_emits_base_activation_commands(
     assert "export PACKAGENT_ACTIVE_ENV='base'" in output
     assert "export CODEX_HOME=" not in output
     assert "export CLAUDE_CONFIG_DIR=" not in output
+    assert "export OPENCODE_CONFIG_DIR=" not in output
 
 
 def test_cli_list_and_status_include_table_headers(
@@ -1232,3 +1332,5 @@ def test_cli_list_and_status_include_table_headers(
     assert "codex-home\t" in status_output
     assert "agents-home\t" in status_output
     assert "claude-home\t" in status_output
+    assert "opencode-config-home\t" in status_output
+    assert "opencode-data-home\t" in status_output

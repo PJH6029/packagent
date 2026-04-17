@@ -1,8 +1,8 @@
 # packagent
 
 `packagent` gives CLI agents purpose-built user-home profiles. Switch one
-environment and your active `~/.codex`, `~/.agents`, and `~/.claude` layers
-switch with it.
+environment and your active `~/.codex`, `~/.agents`, `~/.claude`, and OpenCode
+user-level layers switch with it.
 
 Use it like conda for agent homes: keep an OMX-heavy Codex setup in one env,
 keep Gmail, Google Drive, Calendar, and other computer-use skills in another,
@@ -32,7 +32,7 @@ packagent init
 source ~/.zshrc  # use ~/.bashrc on bash
 ```
 
-When unmanaged `~/.codex`, `~/.agents`, or `~/.claude` paths already exist,
+When unmanaged Codex, agents, Claude, or OpenCode user-level paths already exist,
 interactive `init` asks whether `base` should import them or start fresh. Use
 `packagent init --base-mode import` or `packagent init --base-mode fresh` in
 scripts.
@@ -80,13 +80,16 @@ state into user-level homes. Common targets include:
 - `~/.codex`
 - `~/.agents`
 - `~/.claude`
+- `~/.config/opencode`
+- `~/.local/share/opencode`
 
 When multiple harnesses share the same user home, their files can leak across
 sessions. `packagent` gives those user-level agent layers a small, predictable
 environment manager.
 
-It does not replace Codex or Claude, install harnesses for you, or isolate
-trusted repo-local `.codex/`, `.agents/`, or `.claude/` layers inside projects.
+It does not replace Codex, Claude, or OpenCode, install harnesses for you, or
+isolate trusted repo-local `.codex/`, `.agents/`, `.claude/`, `.opencode/`, or
+`opencode.json` layers inside projects.
 
 ## How It Works
 
@@ -96,6 +99,8 @@ Each environment lives under `~/.packagent/envs/<env>/`:
 ~/.packagent/envs/<env>/.codex
 ~/.packagent/envs/<env>/.agents
 ~/.packagent/envs/<env>/.claude
+~/.packagent/envs/<env>/.config/opencode
+~/.packagent/envs/<env>/.local/share/opencode
 ```
 
 Activating an env switches the managed user-level targets to symlinks pointing
@@ -128,18 +133,22 @@ By default, `packagent` manages:
 - `~/.codex`
 - `~/.agents`
 - `~/.claude`
+- `~/.config/opencode`
+- `~/.local/share/opencode`
 
 If `CODEX_HOME` is already set, `packagent` manages that Codex path instead of
 `~/.codex`. If `CLAUDE_CONFIG_DIR` is already set, it manages that Claude path
-instead of `~/.claude`. `packagent` does not export or rewrite those variables
-for you.
+instead of `~/.claude`. If `OPENCODE_CONFIG_DIR` is already set, it manages
+that OpenCode config directory instead of `~/.config/opencode`. `packagent`
+does not export or rewrite those variables for you. `OPENCODE_CONFIG`, a
+single-file override, is not managed.
 
 On first takeover, existing unmanaged target paths are backed up together under
 one timestamp root, for example
-`~/.packagent-backups/<timestamp>/{.codex,.agents,.claude}`. By default they are
-imported into the permanent `base` env; with `--base-mode fresh`, `base` starts
-empty after the backup. `base` is the fallback environment and cannot be
-removed.
+`~/.packagent-backups/<timestamp>/{.codex,.agents,.claude,.config/opencode,.local/share/opencode}`.
+By default they are imported into the permanent `base` env; with
+`--base-mode fresh`, `base` starts empty after the backup. `base` is the
+fallback environment and cannot be removed.
 
 `packagent uninstall` removes the managed shell startup block and replaces the
 managed symlinks with normal user-level paths again. If `init` used import
@@ -158,6 +167,7 @@ env when present:
 
 - Codex: `auth.json`
 - Claude: `.credentials.json`
+- OpenCode: `auth.json` from `~/.local/share/opencode`
 
 Use `packagent create -n <env> --clone <source-env>` when you want a full copy
 instead.
@@ -188,8 +198,9 @@ paths in state.
 `packagent` v1:
 
 - manages a single global active agent environment
-- switches `~/.codex`, `~/.agents`, and `~/.claude` together
-- respects pre-set `CODEX_HOME` and `CLAUDE_CONFIG_DIR` paths
+- switches Codex, agents, Claude, and OpenCode user-level homes together
+- respects pre-set `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `OPENCODE_CONFIG_DIR`
+  paths
 - seeds only auth files into newly created envs; history and logs stay separate
 - keeps `base` as a permanent fallback environment
 - backs up existing unmanaged target paths on first takeover
@@ -201,8 +212,10 @@ paths in state.
 - isolate trusted repo-local `.codex/config.toml` layers
 - isolate trusted repo-local `.agents/skills` layers
 - isolate trusted repo-local `.claude/` layers
+- isolate trusted repo-local `.opencode/` or `opencode.json` layers
 - isolate repo or system instruction files that agent tools may also load
-- manage non-target homes such as `~/.claude.json` or `~/.gemini`
+- manage non-target homes such as `~/.claude.json`, `~/.gemini`, or
+  `~/.cache/opencode`
 - offer a provider-specific mode; all managed targets switch with the same env
 - support different active environments in different terminals at the same time
 
@@ -240,8 +253,9 @@ Open zsh in the same sandbox image:
 ```
 
 The image includes Python 3, `uv`, `pipx`, Node.js, npm, `@openai/codex`,
-`@anthropic-ai/claude-code`, bash, and zsh. npm global installs use the test
-user's `~/.local` prefix, so `npm install -g ...` works without root.
+`@anthropic-ai/claude-code`, `opencode-ai`, bash, and zsh. npm global installs
+use the test user's `~/.local` prefix, so `npm install -g ...` works without
+root.
 The default interactive shell is bash on every host; pass `shell zsh` when you
 want to test zsh on the same machine.
 
@@ -254,12 +268,15 @@ and uses `agnoster`. Disable this setup with:
 PACKAGENT_DOCKER_ENABLE_PROMPT_FRAMEWORKS=0 ./scripts/run_docker_sandbox.sh shell zsh
 ```
 
-By default, the wrapper copies your host Codex and Claude config directories
-into the disposable container before the test or shell starts:
+By default, the wrapper copies your host Codex, Claude, and OpenCode
+directories into the disposable container before the test or shell starts:
 
 - Codex source: `${CODEX_HOME:-$HOME/.codex}`
 - Claude source: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`
-- Container targets: `/home/tester/.codex` and `/home/tester/.claude`
+- OpenCode config source: `${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}`
+- OpenCode data source: `$HOME/.local/share/opencode`
+- Container targets: `/home/tester/.codex`, `/home/tester/.claude`,
+  `/home/tester/.config/opencode`, and `/home/tester/.local/share/opencode`
 
 The host directories are mounted read-only only for startup copy. A short
 bootstrap step copies them, fixes container ownership, and then runs the shell
@@ -277,13 +294,16 @@ Override source directories:
 ```bash
 PACKAGENT_DOCKER_CODEX_SOURCE=/path/to/codex-home \
 PACKAGENT_DOCKER_CLAUDE_SOURCE=/path/to/claude-home \
+PACKAGENT_DOCKER_OPENCODE_CONFIG_SOURCE=/path/to/opencode-config \
+PACKAGENT_DOCKER_OPENCODE_DATA_SOURCE=/path/to/opencode-data \
 ./scripts/run_docker_sandbox.sh shell
 ```
 
 The scripted smoke flow exercises local installation, shell integration,
 first-run takeover, auth-only seed copying, env creation and activation,
-fresh-base backup behavior, isolation across `.codex`, `.agents`, and
-`.claude`, `doctor --fix`, deactivation, env removal, and uninstall.
+fresh-base backup behavior, isolation across `.codex`, `.agents`, `.claude`,
+and OpenCode config/data, `doctor --fix`, deactivation, env removal, and
+uninstall.
 
 Run optional real prompt-framework checks for Oh My Bash, Oh My Zsh,
 Powerlevel10k, and Spaceship:
@@ -314,7 +334,8 @@ OPENAI_API_KEY=... ANTHROPIC_API_KEY=... ./scripts/run_docker_sandbox.sh shell
 
 The Docker sandbox mirrors normal `packagent` limits: it protects your host
 home, but it does not isolate trusted repo-local `.codex/`, `.agents/`, or
-`.claude/` layers inside mounted projects.
+`.claude/` layers, `.opencode/` directories, or `opencode.json` files inside
+mounted projects.
 
 ## License
 

@@ -11,9 +11,11 @@ These instructions apply to the entire repository.
 - Do not expand the current product to install harness packages, install native
   CLIs, or manage package registries unless the user explicitly asks for that
   scope change.
-- Treat user-level `~/.codex`, `~/.agents`, and `~/.claude` support as the
-  current product boundary. The code should stay ready for future hosts, but v1
-  behavior should not quietly turn into a multi-provider implementation.
+- Treat user-level `~/.codex`, `~/.agents`, `~/.claude`,
+  `~/.config/opencode`, and `~/.local/share/opencode` support as the current
+  product boundary. The code should stay ready for future hosts, but v1
+  behavior should not quietly turn into an unbounded multi-provider
+  implementation.
 - Preserve the intentional v1 limitation that only **one globally active env**
   exists at a time through the managed user-level symlinks.
 
@@ -31,9 +33,11 @@ These instructions apply to the entire repository.
   - `~/.packagent/envs/<env>/.codex`
   - `~/.packagent/envs/<env>/.agents`
   - `~/.packagent/envs/<env>/.claude`
+  - `~/.packagent/envs/<env>/.config/opencode`
+  - `~/.packagent/envs/<env>/.local/share/opencode`
   - `~/.packagent/state.json`
-  - `~/.codex`, `~/.agents`, and `~/.claude` as managed symlink targets for the
-    active env
+  - `~/.codex`, `~/.agents`, `~/.claude`, `~/.config/opencode`, and
+    `~/.local/share/opencode` as managed symlink targets for the active env
 - When changing activation or takeover logic, preserve the safety model:
   - backup/import unmanaged homes before takeover
   - keep `base` as the permanent fallback environment
@@ -50,7 +54,8 @@ These instructions apply to the entire repository.
   - shell hook rendering
   - environment validation or state serialization
 - Filesystem tests must use a temporary `HOME`. Never write tests that touch the
-  real user `~/.codex`, `~/.agents`, `~/.claude`, or `~/.packagent`.
+  real user `~/.codex`, `~/.agents`, `~/.claude`, `~/.config/opencode`,
+  `~/.local/share/opencode`, or `~/.packagent`.
 - For shell behavior, test both bash and zsh output when changing the shell hook
   contract.
 - Treat the prepared Docker sandbox as the default end-to-end verification lane
@@ -74,7 +79,7 @@ These instructions apply to the entire repository.
   - activating an environment
   - switching between environments
   - verifying env isolation through writes under `~/.codex`, `~/.agents`, and
-    `~/.claude`
+    `~/.claude`, plus OpenCode config/data paths when relevant
   - deactivating back to `base`
   - removing non-active environments
   - doctor/repair behavior when link drift matters
@@ -110,5 +115,6 @@ These instructions apply to the entire repository.
 - Keep commits focused and use clear commit messages.
 - Do not overwrite unrelated user changes in the worktree.
 - When documenting limitations, be explicit that `packagent` does **not**
-  isolate trusted repo-local `.codex/`, `.agents/`, or `.claude/` layers or
-  repo/system instruction files that agent tools may also load.
+  isolate trusted repo-local `.codex/`, `.agents/`, `.claude/`, `.opencode/`,
+  `opencode.json`, or repo/system instruction files that agent tools may also
+  load.

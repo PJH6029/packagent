@@ -21,6 +21,12 @@ Environment:
   PACKAGENT_DOCKER_COPY_HOST_CONFIGS Set to 0 to skip host config copy (default: 1)
   PACKAGENT_DOCKER_CODEX_SOURCE      Override Codex source dir (default: CODEX_HOME or ~/.codex)
   PACKAGENT_DOCKER_CLAUDE_SOURCE     Override Claude source dir (default: CLAUDE_CONFIG_DIR or ~/.claude)
+  PACKAGENT_DOCKER_OPENCODE_CONFIG_SOURCE
+                                     Override OpenCode config source dir
+                                     (default: OPENCODE_CONFIG_DIR or ~/.config/opencode)
+  PACKAGENT_DOCKER_OPENCODE_DATA_SOURCE
+                                     Override OpenCode data source dir
+                                     (default: ~/.local/share/opencode)
   PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS
                                      Set to 1 to run optional real Oh My Bash,
                                      Oh My Zsh, Powerlevel10k, and Spaceship
@@ -157,8 +163,12 @@ main() {
   if [ "${PACKAGENT_DOCKER_COPY_HOST_CONFIGS:-1}" != "0" ]; then
     local codex_source="${PACKAGENT_DOCKER_CODEX_SOURCE:-${CODEX_HOME:-$HOME/.codex}}"
     local claude_source="${PACKAGENT_DOCKER_CLAUDE_SOURCE:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+    local opencode_config_source="${PACKAGENT_DOCKER_OPENCODE_CONFIG_SOURCE:-${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}}"
+    local opencode_data_source="${PACKAGENT_DOCKER_OPENCODE_DATA_SOURCE:-$HOME/.local/share/opencode}"
     add_host_config_mount "Codex home" "$codex_source" "/tmp/packagent-host-config/codex"
     add_host_config_mount "Claude config" "$claude_source" "/tmp/packagent-host-config/claude"
+    add_host_config_mount "OpenCode config" "$opencode_config_source" "/tmp/packagent-host-config/opencode-config"
+    add_host_config_mount "OpenCode data" "$opencode_data_source" "/tmp/packagent-host-config/opencode-data"
   else
     echo "== host config copy disabled =="
   fi
@@ -177,8 +187,8 @@ main() {
 == opening interactive sandbox ==
 The repository is available inside the container at /workspace.
 
-If present, your host Codex and Claude config directories were mounted
-read-only for startup and copied into the container user's home. The running
+If present, your host Codex, Claude, and OpenCode config/data directories were
+mounted read-only for startup and copied into the container user's home. The running
 container uses those copied files, so packagent experiments do not mutate the
 host originals.
 

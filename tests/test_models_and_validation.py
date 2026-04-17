@@ -69,6 +69,16 @@ def test_state_serialization_round_trip() -> None:
                 managed_home_path="/tmp/home/.claude",
                 last_link_target="/tmp/home/.packagent/envs/work/.claude",
             ),
+            "opencode-config-home": ManagedTargetState(
+                key="opencode-config-home",
+                managed_home_path="/tmp/home/.config/opencode",
+                last_link_target="/tmp/home/.packagent/envs/work/.config/opencode",
+            ),
+            "opencode-data-home": ManagedTargetState(
+                key="opencode-data-home",
+                managed_home_path="/tmp/home/.local/share/opencode",
+                last_link_target="/tmp/home/.packagent/envs/work/.local/share/opencode",
+            ),
         },
     )
 

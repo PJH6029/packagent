@@ -135,6 +135,17 @@ main() {
     "/tmp/packagent-host-config/claude" \
     "$HOME/.claude"
 
+  copy_seed_home "OpenCode config" \
+    "/tmp/packagent-host-config/opencode-config" \
+    "$HOME/.config/opencode"
+
+  copy_seed_home "OpenCode data" \
+    "/tmp/packagent-host-config/opencode-data" \
+    "$HOME/.local/share/opencode"
+
+  chown_for_tester "$HOME/.config"
+  chown_for_tester "$HOME/.local"
+
   configure_prompt_framework
 
   if [ "$(id -u)" -eq 0 ] && id tester >/dev/null 2>&1; then

@@ -104,7 +104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"You've created an env based on {metadata.cloned_from}.")
             else:
                 print(
-                    "You've created an env with bare codex/claude homes except shared auth. "
+                    "You've created an env with bare agent homes except shared auth. "
                     "Use packagent create -n <env-name> --clone <src-env-name> to seed a source env."
                 )
             return 0
@@ -185,7 +185,7 @@ def _resolve_base_mode(manager: PackagentManager, requested_base_mode: str | Non
     if not sys.stdin.isatty() or not manager.base_init_prompt_needed():
         return BASE_MODE_IMPORT
     print(
-        "packagent found existing unmanaged Codex, agents, or Claude homes.",
+        "packagent found existing unmanaged agent homes.",
         file=sys.stderr,
     )
     print("Choose how to create the base environment:", file=sys.stderr)

@@ -752,6 +752,7 @@ def test_shell_init_can_bootstrap_the_current_env() -> None:
     assert "export PACKAGENT_ACTIVE_ENV='base'" in script
     assert "export CODEX_HOME=" not in script
     assert "export CLAUDE_CONFIG_DIR=" not in script
+    assert "export OPENCODE_CONFIG_DIR=" not in script
 
 
 def test_activate_and_deactivate_shell_commands_are_export_friendly() -> None:
@@ -771,6 +772,8 @@ def test_activate_and_deactivate_shell_commands_are_export_friendly() -> None:
     assert "export PACKAGENT_ACTIVE_ENV='work'" in activate_script
     assert "export CODEX_HOME=" not in activate_script
     assert "export CLAUDE_CONFIG_DIR=" not in activate_script
+    assert "export OPENCODE_CONFIG_DIR=" not in activate_script
     assert "export PACKAGENT_ACTIVE_ENV='base'" in deactivate_script
     assert "export CODEX_HOME=" not in deactivate_script
     assert "export CLAUDE_CONFIG_DIR=" not in deactivate_script
+    assert "export OPENCODE_CONFIG_DIR=" not in deactivate_script

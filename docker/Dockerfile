@@ -25,7 +25,7 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages \
     build \
     pipx
 
-RUN npm install -g @openai/codex @anthropic-ai/claude-code
+RUN npm install -g @openai/codex @anthropic-ai/claude-code opencode-ai
 
 RUN useradd --create-home --shell /bin/bash tester \
  && mkdir -p /home/tester/.local/bin /home/tester/.local/lib /home/tester/.npm \

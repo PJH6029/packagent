@@ -812,7 +812,9 @@ class PackagentManager:
         current_home = self.host.managed_target_path(self.paths, target)
         if record.original_home == str(current_home):
             return True
-        if Path(record.original_home).name == target.home_dir_name:
+        original_home = Path(record.original_home)
+        target_suffix = Path(target.home_dir_name)
+        if original_home.parts[-len(target_suffix.parts):] == target_suffix.parts:
             return True
         backup_root = Path(record.backup_path)
         return record.reason.endswith("_directory") and (backup_root / target.home_dir_name).exists()
@@ -1062,7 +1064,9 @@ class PackagentManager:
         state.init_base_mode = BASE_MODE_FRESH
 
     def _target_backup_path(self, backup_root: Path, target: ManagedTarget) -> Path:
-        return backup_root / target.home_dir_name
+        target_path = backup_root / target.home_dir_name
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        return target_path
 
     def _target_symlink_metadata_path(self, backup_root: Path, target: ManagedTarget) -> Path:
         return backup_root / f"{target.home_dir_name}.symlink.json"
@@ -1071,6 +1075,7 @@ class PackagentManager:
         base_target = self.host.env_target_path(self.paths, "base", target)
         if base_target.exists():
             shutil.rmtree(base_target)
+        base_target.parent.mkdir(parents=True, exist_ok=True)
         copy_directory(snapshot_dir, base_target)
 
     def _mark_base_imported(self, state: PackagentState, backup_root: str) -> None:
