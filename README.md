@@ -102,12 +102,26 @@ Activating an env switches the managed user-level targets to symlinks pointing
 at that env. Only one env is globally active at a time.
 
 The shell hook also exposes the globally active env in your prompt. Plain
-bash/zsh get a `(<env>)` prefix, zsh themes with an existing right prompt place
-the marker in `RPROMPT`, and Oh My Bash Powerline-style themes get a `[pa]
-<env>` segment. Each prompt refresh reconciles with the managed symlinks, so
-other open shells update after another shell activates, deactivates, or
-uninstalls packagent. For custom themes, use `packagent_prompt_info` or
-`PACKAGENT_PROMPT_MODIFIER`.
+bash/zsh get a `(<env>)` prefix, generic zsh themes with an existing right
+prompt place the marker in `RPROMPT`, Powerlevel10k gets a native `packagent`
+segment, Spaceship gets a native `packagent` section, and Oh My Bash
+Powerline-style themes get a `[pa] <env>` segment. Each prompt refresh
+reconciles with the managed symlinks, so other open shells update after another
+shell activates, deactivates, or uninstalls packagent. For custom themes, use
+`packagent_prompt_info` or `PACKAGENT_PROMPT_MODIFIER`.
+
+Powerlevel10k and Spaceship users can move the native zsh marker with
+`PACKAGENT_ZSH_PROMPT_POSITION` (`auto`, `right`, or `left`). Powerlevel10k
+defaults to readable light text on a blue segment and renders `<env> pa`; style
+it through
+`POWERLEVEL9K_PACKAGENT_*` or the `PACKAGENT_POWERLEVEL_FOREGROUND` and
+`PACKAGENT_POWERLEVEL_BACKGROUND` defaults. Set `PACKAGENT_POWERLEVEL_SUFFIX`
+to change or remove the trailing ` pa`. Spaceship uses `SPACESHIP_PACKAGENT_*`
+section options.
+
+Starship is config-file driven, so `packagent init` does not rewrite
+`starship.toml`. Use a Starship custom module that calls
+`packagent shell active-env` when you want a native Starship segment.
 
 By default, `packagent` manages:
 
@@ -271,7 +285,8 @@ first-run takeover, auth-only seed copying, env creation and activation,
 fresh-base backup behavior, isolation across `.codex`, `.agents`, and
 `.claude`, `doctor --fix`, deactivation, env removal, and uninstall.
 
-Run optional real prompt-framework checks for Oh My Bash and Oh My Zsh:
+Run optional real prompt-framework checks for Oh My Bash, Oh My Zsh,
+Powerlevel10k, and Spaceship:
 
 ```bash
 PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS=1 ./scripts/run_docker_sandbox.sh test

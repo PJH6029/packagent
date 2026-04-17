@@ -109,11 +109,15 @@ The hook itself:
 - composes with existing bash `PROMPT_COMMAND` hooks instead of replacing them
 - registers through Oh My Bash prompt hooks when available
 - uses zsh `add-zsh-hook` or `precmd_functions` without replacing theme hooks
+- adds a native zsh `prompt_packagent` segment when Powerlevel10k is active and
+  inserts it into the configured Powerlevel10k left or right prompt elements
+- adds a native zsh `spaceship_packagent` section when Spaceship is active and
+  inserts it into the configured Spaceship prompt or right-prompt order
 - adds an Oh My Bash Powerline segment named `packagent` when that prompt model
   is active, otherwise falls back to a `(<env>)` prompt prefix
-- places the zsh prompt marker in `RPROMPT` when a theme already uses a right
-  prompt, so it aligns with theme-managed metadata such as Conda or kubectl
-  context instead of forcing a leftmost prefix
+- places the generic zsh prompt marker in `RPROMPT` when a theme already uses a
+  right prompt, so it aligns with theme-managed metadata such as Conda or
+  kubectl context instead of forcing a leftmost prefix
 - removes its previous prompt prefix before adding a new one, including when
   tools such as Conda have prepended their own prompt modifier
 - leaves any existing `CODEX_HOME` export untouched

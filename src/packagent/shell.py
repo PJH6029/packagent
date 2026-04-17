@@ -430,6 +430,31 @@ packagent_prompt_info() {
   [[ -n "${PACKAGENT_PROMPT_MODIFIER-}" ]] || return 1
   print -r -- "${PACKAGENT_PROMPT_MODIFIER}"
 }
+prompt_packagent() {
+  _packagent_update_prompt_modifier
+  [[ -n "${PACKAGENT_ACTIVE_ENV-}" ]] || return 0
+  (( $+functions[p10k] || $+commands[p10k] )) || return 0
+  local foreground="${PACKAGENT_POWERLEVEL_FOREGROUND:-255}"
+  local background="${PACKAGENT_POWERLEVEL_BACKGROUND:-31}"
+  local suffix="${PACKAGENT_POWERLEVEL_SUFFIX- pa}"
+  local text="${PACKAGENT_ACTIVE_ENV}${suffix}"
+  p10k segment -f "$foreground" -b "$background" -t "$text"
+}
+spaceship_packagent() {
+  _packagent_update_prompt_modifier
+  [[ -n "${PACKAGENT_ACTIVE_ENV-}" ]] || return 0
+  (( $+functions[spaceship::section::v4] )) || return 0
+  local color="${SPACESHIP_PACKAGENT_COLOR:-cyan}"
+  local prefix="${SPACESHIP_PACKAGENT_PREFIX:-}"
+  local suffix="${SPACESHIP_PACKAGENT_SUFFIX:-${SPACESHIP_PROMPT_DEFAULT_SUFFIX:- }}"
+  local symbol="${SPACESHIP_PACKAGENT_SYMBOL:-pa }"
+  spaceship::section::v4 \
+    --color "$color" \
+    --prefix "$prefix" \
+    --suffix "$suffix" \
+    --symbol "$symbol" \
+    "$PACKAGENT_ACTIVE_ENV"
+}
 _packagent_remove_prompt_modifier() {
   local prompt="$1"
   local modifier="$2"
@@ -459,7 +484,151 @@ _packagent_zsh_prompt_position() {
     print -r -- "left"
   fi
 }
+_packagent_zsh_array_has() {
+  local needle="$1"
+  shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+_packagent_zsh_powerlevel_side() {
+  local requested="${PACKAGENT_ZSH_PROMPT_POSITION:-auto}"
+  case "$requested" in
+    left|right)
+      print -r -- "$requested"
+      return 0
+      ;;
+  esac
+  if (( ${+POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS} )); then
+    print -r -- "right"
+  elif (( ${+POWERLEVEL9K_LEFT_PROMPT_ELEMENTS} )); then
+    print -r -- "left"
+  else
+    return 1
+  fi
+}
+_packagent_zsh_ensure_powerlevel_segment() {
+  PACKAGENT_ZSH_POWERLEVEL_CHANGED=0
+  local side
+  side="$(_packagent_zsh_powerlevel_side)" || return 1
+  local segment="packagent"
+  local item
+  local inserted
+  local -a updated
+  case "$side" in
+    right)
+      (( ${+POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS} )) || return 1
+      _packagent_zsh_array_has "$segment" "${POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS[@]}" && return 0
+      inserted=0
+      for item in "${POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS[@]}"; do
+        if [[ "$item" == "status" && "$inserted" == "0" ]]; then
+          updated+=("$segment")
+          inserted=1
+        fi
+        updated+=("$item")
+      done
+      (( inserted )) || updated+=("$segment")
+      POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=("${updated[@]}")
+      ;;
+    left)
+      (( ${+POWERLEVEL9K_LEFT_PROMPT_ELEMENTS} )) || return 1
+      _packagent_zsh_array_has "$segment" "${POWERLEVEL9K_LEFT_PROMPT_ELEMENTS[@]}" && return 0
+      inserted=0
+      for item in "${POWERLEVEL9K_LEFT_PROMPT_ELEMENTS[@]}"; do
+        if [[ "$item" == "dir" && "$inserted" == "0" ]]; then
+          updated+=("$segment")
+          inserted=1
+        fi
+        updated+=("$item")
+      done
+      (( inserted )) || updated+=("$segment")
+      POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=("${updated[@]}")
+      ;;
+  esac
+  PACKAGENT_ZSH_POWERLEVEL_CHANGED=1
+}
+_packagent_install_zsh_powerlevel_prompt() {
+  if ! (( $+functions[p10k] || $+commands[p10k] )); then
+    return 1
+  fi
+  _packagent_zsh_ensure_powerlevel_segment || return 1
+  PACKAGENT_PROMPT_NATIVE=1
+  PACKAGENT_ZSH_NATIVE_PROMPT=powerlevel10k
+  if [[ "${PACKAGENT_ZSH_POWERLEVEL_CHANGED-0}" == "1" ]]; then
+    p10k reload >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+_packagent_zsh_spaceship_side() {
+  local requested="${PACKAGENT_ZSH_PROMPT_POSITION:-auto}"
+  case "$requested" in
+    left|right)
+      print -r -- "$requested"
+      return 0
+      ;;
+  esac
+  if (( ${+SPACESHIP_RPROMPT_ORDER} && ${#SPACESHIP_RPROMPT_ORDER[@]} > 0 )); then
+    print -r -- "right"
+  elif (( ${+SPACESHIP_PROMPT_ORDER} )); then
+    print -r -- "left"
+  elif (( ${+SPACESHIP_RPROMPT_ORDER} )); then
+    print -r -- "right"
+  else
+    return 1
+  fi
+}
+_packagent_zsh_ensure_spaceship_section() {
+  local side
+  side="$(_packagent_zsh_spaceship_side)" || return 1
+  local section="packagent"
+  local item
+  local inserted
+  local -a updated
+  case "$side" in
+    right)
+      (( ${+SPACESHIP_RPROMPT_ORDER} )) || return 1
+      _packagent_zsh_array_has "$section" "${SPACESHIP_RPROMPT_ORDER[@]}" && return 0
+      SPACESHIP_RPROMPT_ORDER=("$section" "${SPACESHIP_RPROMPT_ORDER[@]}")
+      ;;
+    left)
+      (( ${+SPACESHIP_PROMPT_ORDER} )) || return 1
+      _packagent_zsh_array_has "$section" "${SPACESHIP_PROMPT_ORDER[@]}" && return 0
+      inserted=0
+      for item in "${SPACESHIP_PROMPT_ORDER[@]}"; do
+        if [[ "$item" == "char" && "$inserted" == "0" ]]; then
+          updated+=("$section")
+          inserted=1
+        fi
+        updated+=("$item")
+      done
+      (( inserted )) || updated+=("$section")
+      SPACESHIP_PROMPT_ORDER=("${updated[@]}")
+      ;;
+  esac
+}
+_packagent_install_zsh_spaceship_prompt() {
+  if ! (( $+functions[spaceship::section::v4] )); then
+    return 1
+  fi
+  _packagent_zsh_ensure_spaceship_section || return 1
+  PACKAGENT_PROMPT_NATIVE=1
+  PACKAGENT_ZSH_NATIVE_PROMPT=spaceship
+  return 0
+}
+_packagent_install_zsh_native_prompt() {
+  PACKAGENT_PROMPT_NATIVE=0
+  PACKAGENT_ZSH_NATIVE_PROMPT=""
+  _packagent_install_zsh_powerlevel_prompt && return 0
+  _packagent_install_zsh_spaceship_prompt && return 0
+  return 1
+}
 _packagent_refresh_prompt() {
+  if _packagent_install_zsh_native_prompt; then
+    PACKAGENT_PROMPT_LAST_MODIFIER=""
+    return 0
+  fi
   _packagent_update_prompt_modifier
   local base_prompt
   local base_rprompt

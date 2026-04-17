@@ -177,7 +177,7 @@ PS1='initial$ '
 _omb_util_prompt_command=()
 _omb_util_add_prompt_command() {{
   local hook
-  for hook in "${{_omb_util_prompt_command[@]}}"; do
+  for hook in "${{_omb_util_prompt_command[@]+"${{_omb_util_prompt_command[@]}}"}}"; do
     [ "$hook" = "$1" ] && return 0
   done
   _omb_util_prompt_command+=("$1")
@@ -185,7 +185,7 @@ _omb_util_add_prompt_command() {{
 }}
 _omb_util_prompt_command_hook() {{
   local hook
-  for hook in "${{_omb_util_prompt_command[@]}}"; do
+  for hook in "${{_omb_util_prompt_command[@]+"${{_omb_util_prompt_command[@]}}"}}"; do
     "$hook"
   done
 }}
@@ -228,7 +228,7 @@ PS1='initial$ '
 _omb_util_prompt_command=()
 _omb_util_add_prompt_command() {{
   local hook
-  for hook in "${{_omb_util_prompt_command[@]}}"; do
+  for hook in "${{_omb_util_prompt_command[@]+"${{_omb_util_prompt_command[@]}}"}}"; do
     [ "$hook" = "$1" ] && return 0
   done
   _omb_util_prompt_command+=("$1")
@@ -236,7 +236,7 @@ _omb_util_add_prompt_command() {{
 }}
 _omb_util_prompt_command_hook() {{
   local hook
-  for hook in "${{_omb_util_prompt_command[@]}}"; do
+  for hook in "${{_omb_util_prompt_command[@]+"${{_omb_util_prompt_command[@]}}"}}"; do
     "$hook"
   done
 }}
@@ -291,6 +291,10 @@ def test_zsh_shell_init_contains_wrapper_and_precmd_hook() -> None:
     assert "add-zsh-hook precmd _packagent_prompt_command" in script
     assert "precmd_functions+=(_packagent_prompt_command)" in script
     assert "packagent_prompt_info()" in script
+    assert "prompt_packagent()" in script
+    assert "POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS" in script
+    assert "spaceship_packagent()" in script
+    assert "SPACESHIP_PROMPT_ORDER" in script
     assert "PACKAGENT_ZSH_PROMPT_POSITION" in script
     assert 'PACKAGENT_SHELL=zsh' in script
     assert '[[ "$1" == "uninstall" ]]' in script
@@ -332,6 +336,173 @@ _plain_theme_precmd
 _packagent_prompt_command
 [[ "$PROMPT" == '(work) plain%# ' ]] || {{ print -u2 -- "unexpected plain prompt: $PROMPT"; exit 1; }}
 [[ -z "$RPROMPT" ]] || {{ print -u2 -- "unexpected plain right prompt: $RPROMPT"; exit 1; }}
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["zsh", "-f", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_zsh_shell_init_installs_powerlevel10k_segment(tmp_path: Path) -> None:
+    if shutil.which("zsh") is None:
+        pytest.skip("zsh is not installed")
+
+    script_path = tmp_path / "zsh-powerlevel10k.zsh"
+    executable = _write_active_env_packagent(tmp_path)
+    hook = render_shell_init("zsh")
+    script_path.write_text(
+        f"""
+set -e
+PACKAGENT_BIN={shlex.quote(str(executable))}
+PROMPT='theme%# '
+RPROMPT='theme-right'
+typeset -ga POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS
+POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status command_execution_time virtualenv pyenv)
+typeset -gi PACKAGENT_TEST_P10K_RELOADS=0
+p10k() {{
+  case "$1" in
+    reload)
+      PACKAGENT_TEST_P10K_RELOADS=$((PACKAGENT_TEST_P10K_RELOADS + 1))
+      return 0
+      ;;
+    segment)
+      shift
+      local text=''
+      local foreground=''
+      local background=''
+      while (( $# )); do
+        case "$1" in
+          -f)
+            foreground="$2"
+            shift 2
+            ;;
+          -b)
+            background="$2"
+            shift 2
+            ;;
+          -t)
+            text="$2"
+            shift 2
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+      print -rn -- "SEGMENT:$foreground:$background:$text"
+      return 0
+      ;;
+  esac
+}}
+export PACKAGENT_ACTIVE_ENV=base
+{hook}
+[[ "${{(j: :)POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS}}" == 'packagent status command_execution_time virtualenv pyenv' ]] || {{
+  print -u2 -- "unexpected elements: ${{(j: :)POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS}}"
+  exit 1
+}}
+[[ "$PACKAGENT_PROMPT_NATIVE" == '1' ]] || {{ print -u2 -- "native prompt was not enabled"; exit 1; }}
+[[ "$PACKAGENT_TEST_P10K_RELOADS" == '1' ]] || {{ print -u2 -- "unexpected reload count: $PACKAGENT_TEST_P10K_RELOADS"; exit 1; }}
+[[ "$PROMPT" == 'theme%# ' ]] || {{ print -u2 -- "prompt was rewritten: $PROMPT"; exit 1; }}
+[[ "$RPROMPT" == 'theme-right' ]] || {{ print -u2 -- "right prompt was rewritten: $RPROMPT"; exit 1; }}
+[[ "$(prompt_packagent)" == 'SEGMENT:255:31:base pa' ]] || {{ print -u2 -- "unexpected segment output: $(prompt_packagent)"; exit 1; }}
+PACKAGENT_POWERLEVEL_SUFFIX=''
+export PACKAGENT_POWERLEVEL_SUFFIX
+[[ "$(prompt_packagent)" == 'SEGMENT:255:31:base' ]] || {{ print -u2 -- "unexpected suffix override output: $(prompt_packagent)"; exit 1; }}
+POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status command_execution_time virtualenv pyenv)
+{hook}
+[[ "${{(j: :)POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS}}" == 'packagent status command_execution_time virtualenv pyenv' ]] || {{
+  print -u2 -- "unexpected elements after resourcing: ${{(j: :)POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS}}"
+  exit 1
+}}
+[[ "$PACKAGENT_TEST_P10K_RELOADS" == '2' ]] || {{ print -u2 -- "unexpected reload count after resourcing: $PACKAGENT_TEST_P10K_RELOADS"; exit 1; }}
+_packagent_prompt_command
+[[ "$PACKAGENT_TEST_P10K_RELOADS" == '2' ]] || {{ print -u2 -- "prompt refresh reloaded unnecessarily: $PACKAGENT_TEST_P10K_RELOADS"; exit 1; }}
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["zsh", "-f", str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_zsh_shell_init_installs_spaceship_section(tmp_path: Path) -> None:
+    if shutil.which("zsh") is None:
+        pytest.skip("zsh is not installed")
+
+    script_path = tmp_path / "zsh-spaceship.zsh"
+    executable = _write_active_env_packagent(tmp_path)
+    hook = render_shell_init("zsh")
+    script_path.write_text(
+        f"""
+set -e
+PACKAGENT_BIN={shlex.quote(str(executable))}
+PROMPT='theme%# '
+RPROMPT=''
+typeset -ga SPACESHIP_PROMPT_ORDER
+typeset -ga SPACESHIP_RPROMPT_ORDER
+SPACESHIP_PROMPT_ORDER=(dir git line_sep char)
+SPACESHIP_RPROMPT_ORDER=()
+SPACESHIP_PROMPT_DEFAULT_SUFFIX=' '
+spaceship::section::v4() {{
+  local color=''
+  local symbol=''
+  local content=''
+  while (( $# )); do
+    case "$1" in
+      --color)
+        color="$2"
+        shift 2
+        ;;
+      --symbol)
+        symbol="$2"
+        shift 2
+        ;;
+      --prefix|--suffix)
+        shift 2
+        ;;
+      *)
+        content="$1"
+        shift
+        ;;
+    esac
+  done
+  print -rn -- "SECTION:$color:$symbol:$content"
+}}
+export PACKAGENT_ACTIVE_ENV=base
+{hook}
+[[ "$PACKAGENT_PROMPT_NATIVE" == '1' ]] || {{ print -u2 -- "native prompt was not enabled"; exit 1; }}
+[[ "$PACKAGENT_ZSH_NATIVE_PROMPT" == 'spaceship' ]] || {{ print -u2 -- "unexpected native prompt: $PACKAGENT_ZSH_NATIVE_PROMPT"; exit 1; }}
+[[ "${{(j: :)SPACESHIP_PROMPT_ORDER}}" == 'dir git line_sep packagent char' ]] || {{
+  print -u2 -- "unexpected prompt order: ${{(j: :)SPACESHIP_PROMPT_ORDER}}"
+  exit 1
+}}
+[[ "$(spaceship_packagent)" == 'SECTION:cyan:pa :base' ]] || {{ print -u2 -- "unexpected section output: $(spaceship_packagent)"; exit 1; }}
+SPACESHIP_PROMPT_ORDER=(dir char)
+SPACESHIP_RPROMPT_ORDER=(exec_time)
+PACKAGENT_ZSH_PROMPT_POSITION=right
+export PACKAGENT_ZSH_PROMPT_POSITION
+{hook}
+[[ "${{(j: :)SPACESHIP_RPROMPT_ORDER}}" == 'packagent exec_time' ]] || {{
+  print -u2 -- "unexpected rprompt order: ${{(j: :)SPACESHIP_RPROMPT_ORDER}}"
+  exit 1
+}}
+[[ "${{(j: :)SPACESHIP_PROMPT_ORDER}}" == 'dir char' ]] || {{
+  print -u2 -- "unexpected prompt order after right install: ${{(j: :)SPACESHIP_PROMPT_ORDER}}"
+  exit 1
+}}
 """,
         encoding="utf-8",
     )

@@ -22,7 +22,9 @@ Environment:
   PACKAGENT_DOCKER_CODEX_SOURCE      Override Codex source dir (default: CODEX_HOME or ~/.codex)
   PACKAGENT_DOCKER_CLAUDE_SOURCE     Override Claude source dir (default: CLAUDE_CONFIG_DIR or ~/.claude)
   PACKAGENT_DOCKER_PROMPT_FRAMEWORK_TESTS
-                                     Set to 1 to run optional real Oh My Bash / Oh My Zsh prompt tests.
+                                     Set to 1 to run optional real Oh My Bash,
+                                     Oh My Zsh, Powerlevel10k, and Spaceship
+                                     prompt tests.
 EOF
 }
 

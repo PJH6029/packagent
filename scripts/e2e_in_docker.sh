@@ -55,6 +55,8 @@ EOF
 run_real_prompt_framework_tests() {
   local omb_dir="/tmp/packagent-real-oh-my-bash"
   local omz_dir="/tmp/packagent-real-oh-my-zsh"
+  local p10k_dir="/tmp/packagent-real-powerlevel10k"
+  local spaceship_dir="/tmp/packagent-real-spaceship"
   local prompt_fake_bin="/tmp/packagent-real-prompt-active-env"
   write_prompt_active_env_fake "$prompt_fake_bin"
 
@@ -66,6 +68,14 @@ run_real_prompt_framework_tests() {
     "Oh My Zsh" \
     "https://github.com/ohmyzsh/ohmyzsh.git" \
     "$omz_dir"
+  prepare_prompt_framework \
+    "Powerlevel10k" \
+    "https://github.com/romkatv/powerlevel10k.git" \
+    "$p10k_dir"
+  prepare_prompt_framework \
+    "Spaceship" \
+    "https://github.com/spaceship-prompt/spaceship-prompt.git" \
+    "$spaceship_dir"
 
   echo "== verify real oh-my-bash powerline prompt =="
   PACKAGENT_BIN="$prompt_fake_bin" OSH="$omb_dir" bash --norc -i -c '
@@ -119,6 +129,72 @@ run_real_prompt_framework_tests() {
   ' >/tmp/packagent-real-omz.txt 2>&1 || {
     cat /tmp/packagent-real-omz.txt >&2
     fail "real Oh My Zsh prompt test failed"
+  }
+
+  echo "== verify real powerlevel10k native prompt segment =="
+  PACKAGENT_BIN="$prompt_fake_bin" PACKAGENT_P10K="$p10k_dir" zsh -fic '
+    unsetopt nounset 2>/dev/null || true
+    source "$PACKAGENT_P10K/powerlevel10k.zsh-theme" || exit 1
+    source "$PACKAGENT_P10K/config/p10k-rainbow.zsh" || exit 1
+    export PACKAGENT_ACTIVE_ENV=base
+    eval "$(command packagent shell init zsh)" || exit 1
+    [ "${PACKAGENT_PROMPT_NATIVE-}" = "1" ] || {
+      echo "Powerlevel10k native prompt was not enabled" >&2
+      exit 1
+    }
+    case " ${(j: :)POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS} " in
+      *" packagent "*) ;;
+      *)
+        echo "Powerlevel10k right prompt missing packagent:" \
+          "${(j: :)POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS}" >&2
+        exit 1
+        ;;
+    esac
+    [ "$(packagent_prompt_info)" = "(base) " ] || exit 1
+    POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status command_execution_time virtualenv pyenv)
+    eval "$(command packagent shell init zsh)" || exit 1
+    case " ${(j: :)POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS} " in
+      *" packagent "*) ;;
+      *)
+        echo "Powerlevel10k right prompt missing packagent after reload:" \
+          "${(j: :)POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS}" >&2
+        exit 1
+        ;;
+    esac
+  ' >/tmp/packagent-real-p10k.txt 2>&1 || {
+    cat /tmp/packagent-real-p10k.txt >&2
+    fail "real Powerlevel10k prompt test failed"
+  }
+
+  echo "== verify real spaceship native prompt section =="
+  PACKAGENT_BIN="$prompt_fake_bin" PACKAGENT_SPACESHIP="$spaceship_dir" zsh -fic '
+    unsetopt nounset 2>/dev/null || true
+    source "$PACKAGENT_SPACESHIP/spaceship.zsh" || exit 1
+    export PACKAGENT_ACTIVE_ENV=base
+    eval "$(command packagent shell init zsh)" || exit 1
+    [ "${PACKAGENT_PROMPT_NATIVE-}" = "1" ] || {
+      echo "Spaceship native prompt was not enabled" >&2
+      exit 1
+    }
+    [ "${PACKAGENT_ZSH_NATIVE_PROMPT-}" = "spaceship" ] || {
+      echo "Unexpected zsh native prompt: ${PACKAGENT_ZSH_NATIVE_PROMPT-}" >&2
+      exit 1
+    }
+    case " ${(j: :)SPACESHIP_PROMPT_ORDER} " in
+      *" packagent "*) ;;
+      *)
+        echo "Spaceship prompt missing packagent:" \
+          "${(j: :)SPACESHIP_PROMPT_ORDER}" >&2
+        exit 1
+        ;;
+    esac
+    case "$(spaceship_packagent)" in
+      *base*) ;;
+      *) echo "Spaceship packagent section did not render base" >&2; exit 1 ;;
+    esac
+  ' >/tmp/packagent-real-spaceship.txt 2>&1 || {
+    cat /tmp/packagent-real-spaceship.txt >&2
+    fail "real Spaceship prompt test failed"
   }
 }
 
